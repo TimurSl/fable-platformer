@@ -31,19 +31,60 @@ function spr(img, x, y, flip, s = 1) {
   if (flip) { ctx.save(); ctx.translate(x + img.width * s, y); ctx.scale(-s, s); ctx.drawImage(img, 0, 0); ctx.restore(); }
   else ctx.drawImage(img, x, y, img.width * s, img.height * s);
 }
-function setFont(size) { ctx.font = size + 'px "Press Start 2P", monospace'; ctx.textBaseline = 'top'; }
-function text(s, x, y, col = '#fff', size = 8, align = 'left') {
-  setFont(size); ctx.textAlign = align;
-  if (col !== '#17161c' && col !== '#a02020' && col !== '#2d4c8f') { ctx.fillStyle = '#000'; ctx.fillText(s, x + 1, y + 1); }
-  ctx.fillStyle = col; ctx.fillText(s, x, y);
+// Пиксельный шрифт. Каждый символ один раз растеризуется в родной сетке шрифта (клетка 8×8:
+// один пиксель шрифта = один пиксель холста), без полупрозрачных краёв, а на экран выводится
+// масштабированием «ближайшим соседом». Раньше шрифт масштабировался векторно (font-size × SC),
+// из-за чего кегль 6 расплывался. Ширина символа = кегль (у Press Start 2P шаг равен 1 em).
+const glyphs = new Map();
+// символы, которых нет в шрифте, — свои пиксельные картинки 8×8
+const BIT = {
+  '←': ['........', '...#....', '..##....', '.#######', '.#######', '..##....', '...#....', '........'],
+  '→': ['........', '....#...', '....##..', '#######.', '#######.', '....##..', '....#...', '........'],
+  '↑': ['...##...', '..####..', '.######.', '...##...', '...##...', '...##...', '...##...', '........'],
+  '↓': ['........', '...##...', '...##...', '...##...', '...##...', '.######.', '..####..', '...##...'],
+  '▶': ['.##.....', '.####...', '.######.', '.#######', '.######.', '.####...', '.##.....', '........'],
+  '∞': ['........', '........', '.##..##.', '#..##..#', '#..##..#', '.##..##.', '........', '........'],
+};
+function glyph(ch, col) {
+  const key = ch + col; let c = glyphs.get(key); if (c) return c;
+  c = document.createElement('canvas'); c.width = 8; c.height = 10;
+  const g = c.getContext('2d');
+  if (BIT[ch]) { g.fillStyle = col; BIT[ch].forEach((r, y) => { for (let x = 0; x < 8; x++) if (r[x] === '#') g.fillRect(x, y, 1, 1); }); glyphs.set(key, c); return c; }
+  g.font = '8px "Press Start 2P", monospace'; g.textBaseline = 'top'; g.textAlign = 'left'; g.fillStyle = '#000'; g.fillText(ch, 0, 0);
+  const d = g.getImageData(0, 0, 8, 10), a = d.data;
+  for (let i = 3; i < a.length; i += 4) a[i] = a[i] >= 110 ? 255 : 0; // убираем сглаживание
+  g.putImageData(d, 0, 0);
+  g.globalCompositeOperation = 'source-in'; g.fillStyle = col; g.fillRect(0, 0, 8, 10);
+  glyphs.set(key, c); return c;
+}
+if (document.fonts) { // шрифт подгружается с Google Fonts: когда придёт, символы нужно растеризовать заново
+  const redo = () => glyphs.clear();
+  document.fonts.addEventListener('loadingdone', redo);
+  document.fonts.load('8px "Press Start 2P"', 'Aa Яя').then(redo, () => { });
+}
+const textW = (s, size) => [...s].length * size;
+function text(s, x, y, col = '#fff', size = 8, align = 'left', shadow) {
+  s = String(s);
+  if (shadow === undefined) shadow = col !== '#17161c' && col !== '#a02020' && col !== '#2d4c8f';
+  const w = textW(s, size), k = size / 8;
+  x = Math.round(align === 'center' ? x - w / 2 : align === 'right' ? x - w : x); y = Math.round(y);
+  ctx.imageSmoothingEnabled = false;
+  let i = 0;
+  for (const ch of s) {
+    if (ch !== ' ') {
+      if (shadow) ctx.drawImage(glyph(ch, '#000'), x + i * size + 1, y + 1, 8 * k, 10 * k);
+      ctx.drawImage(glyph(ch, col), x + i * size, y, 8 * k, 10 * k);
+    }
+    i++;
+  }
 }
 function wrap(s, maxW, size = 8) {
-  setFont(size); const out = [];
+  const out = [];
   for (const para of s.split('\n')) {
     let line = '';
     for (const w of para.split(' ')) {
       const tst = line ? line + ' ' + w : w;
-      if (ctx.measureText(tst).width > maxW && line) { out.push(line); line = w; } else line = tst;
+      if (textW(tst, size) > maxW && line) { out.push(line); line = w; } else line = tst;
     }
     out.push(line);
   }
@@ -76,6 +117,7 @@ const KM = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right'
 addEventListener('keydown', e => {
   const k = KM[e.code];
   codes.add(e.code);
+  setPad(false);
   if (e.code === 'KeyF' && !e.repeat) toggleFs();
   if (e.code === 'ArrowDown' || e.code === 'ArrowUp') e.preventDefault();
   if (k) { e.preventDefault(); if (k === 'jump' && !keys.jump) jumpPressed = true; keys[k] = 1; }
@@ -90,10 +132,14 @@ cv.addEventListener('pointerdown', e => {
   anyPressed = true; initAudio();
 });
 const pad = document.getElementById('pad');
-if ('ontouchstart' in window || navigator.maxTouchPoints > 0) pad.classList.add('on');
+// Экранные кнопки нужны только там, где основной способ ввода — палец. На ПК (в том числе на ноутбуке с
+// тачскрином) их нет: они появятся, только если реально коснуться экрана, и пропадут от клавиатуры или мыши.
+const coarse = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+const setPad = on => { if (pad.classList.contains('on') === on) return; pad.classList.toggle('on', on); if (!on) padRelease(); };
+pad.classList.toggle('on', window.matchMedia ? coarse : 'ontouchstart' in window);
 // Экранные кнопки: один обработчик на всё окно. Касание привязано к pointerId, палец можно
 // вести с кнопки на кнопку, а зона нажатия у кнопки шире видимой (у прыжка — заметно шире).
-const padBtns = [...pad.querySelectorAll('button')].map(b => ({ b, k: b.dataset.k, grow: b.dataset.k === 'jump' ? 28 : 10, held: false }));
+const padBtns = [...pad.querySelectorAll('button')].map(b => ({ b, k: b.dataset.k, grow: b.dataset.k === 'jump' ? 40 : 18, held: false }));
 const padPtr = new Map(); // pointerId -> нажатая кнопка (null, если палец ушёл с кнопок)
 const padActive = () => pad.classList.contains('on') && pad.dataset.mode !== 'none';
 function padHit(x, y) {
@@ -102,7 +148,7 @@ function padHit(x, y) {
     const r = o.b.getBoundingClientRect(); if (!r.width) continue;
     const dx = Math.max(r.left - x, 0, x - r.right), dy = Math.max(r.top - y, 0, y - r.bottom), d = Math.hypot(dx, dy);
     if (d > o.grow) continue;
-    const score = d - (o.k === 'jump' ? 8 : 0); // в спорной зоне между кнопками выигрывает прыжок
+    const score = d - (o.k === 'jump' ? 10 : 0); // в спорной зоне между кнопками выигрывает прыжок
     if (score < bs) { bs = score; best = o.k; }
   }
   return best;
@@ -117,6 +163,7 @@ function padSync() {
 }
 function padRelease() { padPtr.clear(); padSync(); }
 addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch') setPad(true); else if (e.pointerType === 'mouse' && !coarse) setPad(false);
   if (!padActive() || (e.target.closest && e.target.closest('#fs'))) return;
   const k = padHit(e.clientX, e.clientY); if (!k) return;
   e.preventDefault(); e.stopPropagation(); padPtr.set(e.pointerId, k); padSync();
@@ -165,14 +212,14 @@ const ZONES = [
 ];
 // 1–3 Одесса, 4–6 Газа, 7–9 Израиль, 10 Синагога, 11–14 серверы Valve, 15–19 закулисье, 20 мета-пространство
 const zoneOf = n => n === SALT ? 4 : n <= 3 ? 0 : n <= 6 ? 1 : n <= 9 ? 2 : n === 10 ? 5 : n <= 14 ? 6 : n <= 19 ? 7 : 3;
-const MELVI = 'mƎλvi';
+const MELVI = 'мевли';
 const INTRO = {
   1: ['ПРЕДЫСТОРИЯ\n\nМрДрНос случайно запушил новую обнову для ВОТВ прямо в ядро Линукс. У всех, кто скачал ядро 8-й версии, Линукс сломался.',
     'ОДЕССА\n\nХолос решил сбежать из города и навалять Носатому.\n\nНа пути — бутылки Никиты Яроша и Дынекс. Дынексу не попадайся: порвёт туза.'],
   4: ['ГАЗА\n\nХолос доплыл, но перепутал карты и вместо Израиля попал в Газу.\n\nМолодец, Холос.'],
   7: ['ИЗРАИЛЬ\n\nПаспорт сработал. Холос в Израиле.\n\nХолос ищет МрДрНоса. ' + MELVI + ' сказал, что знает дорогу в мета-пространство.'],
   10: ['СИНАГОГА\n\nДорога в мета-пространство ведёт через синагогу.\n\nТут тихо, красиво и подозрительно много врагов.'],
-  11: ['СЕРВЕРА VALVE\n\nПод синагогой — серверные Valve. Гудит так, будто там майнят.\n\nFail2ban и Anonymous уже в курсе, что ты пришёл.'],
+  11: ['СЕРВЕРА VALVE\n\nПод синагогой — серверные Valve. Гудит так, будто там майнят.\n\nФейл2бан и Анонимус уже в курсе, что ты пришёл.'],
   15: ['ЗАКУЛИСЬЕ\n\nХолос проломил декорации и оказался за кулисами самой игры.\n\nЗдесь сидят те, кого в игру не пускали.'],
   20: ['МЕТА-ПРОСТРАНСТВО\n\nВот он. Носатый.\n\nХватай царь-флешки и ставь ему нормальный дистрибутив.'],
   [SALT]: ['СОЛЕВАЯ ШАХТА\n\nТут пахнет солью. И медведем.\n\nОчень большим медведем.'],
@@ -192,7 +239,9 @@ let frame = 0, scene = null, L = null, P = null, shots = [], parts = [], safe = 
 // ---------- построение уровней
 const SIZES = { y: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26],
   fat: [16, 18], ari: [16, 18], bar: [22, 20], alt: [14, 18], poc: [16, 20], tel: [10, 12], ban: [24, 12], ano: [40, 16], duo: [12, 18] };
-const NAMES = { fat: 'DiabloFAT', ari: 'Ariraly', bar: 'Baratrum', alt: 'Sam Altman', poc: 'Dangerous Pochyk', tel: 'МОШЕННИКИ', ban: 'Fail2ban', ano: 'Anonymous' };
+// имена над особыми врагами (показываются по-русски); телефонных мошенников больше нет — теперь это Шайтаны
+// (запасной вариант игры слов: 'МОШОННИКИ')
+const NAMES = { fat: 'ДиаблоФАТ', ari: 'Арирали', bar: 'Баратрум', alt: 'Сэм Альтман', poc: 'Опасный Почик', tel: 'ШАЙТАНЫ', ban: 'Фейл2бан', ano: 'Анонимус' };
 // какие новые враги встречаются на уровне (первый раз каждый гарантированно появляется)
 const POOL = {
   2: ['poc'], 3: ['poc'],
@@ -228,7 +277,7 @@ function buildLevel(n) {
     else if (t === 'ari') { flat(2); ents.push(ent('ari', x * T, top() - 18, { st: 0, cd: 50, vx: 0, vy: 0, face: -1 })); flat(ri(6, 7)); }
     else if (t === 'bar') { flat(2); const a = x; flat(ri(8, 10)); ents.push(ent('bar', (a + 4) * T, top() - 20, { x0: a * T, x1: x * T - 22, dir: -1, st: 0, cd: 40 })); flat(2); }
     else if (t === 'alt') { flat(2); const a = x; flat(ri(8, 10)); ents.push(ent('alt', (a + 4) * T, top() - 18, { x0: a * T + 2, x1: x * T - 16, cd: 100 })); flat(2); }
-    else if (t === 'poc') { flat(2); ents.push(ent('poc', x * T, top() - 20, { cd: 60 })); flat(ri(4, 5)); }
+    else if (t === 'poc') { flat(2); ents.push(ent('poc', x * T, top() - 20, { cd: 60, st: 0, tm: 0, met: false, talk: 0 })); flat(ri(4, 5)); }
     else if (t === 'tel') {
       flat(3);
       for (let i = 0; i < 2; i++) { const ex = (x + i * 2) * T, ey = top() - 62 - i * 16; ents.push(ent('tel', ex, ey, { hx: ex, hy: ey, ph: i * 2 })); }
@@ -315,7 +364,7 @@ function buildArena(n) {
 function startLevel(n) {
   if (n <= LAST) save(n);
   L = n === LAST || n === SALT ? buildArena(n) : buildLevel(n);
-  P = { x: 24, y: L.spawnY, w: 8, h: 13, vx: 0, vy: 0, hp: 3, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null };
+  P = { x: 24, y: L.spawnY, w: 8, h: 13, vx: 0, vy: 0, hp: 3, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null, stop: 0 };
   safe = { x: P.x, y: P.y }; shots = []; parts = []; shake = 0;
   scene = playScene;
 }
@@ -361,7 +410,7 @@ function burst(x, y, col, n = 6) {
   for (let i = 0; i < n; i++) parts.push({ x, y, vx: (Math.random() - 0.5) * 3, vy: -Math.random() * 2.5, life: 20 + Math.random() * 15, col });
 }
 function hurt(n, c) {
-  if (P.inv > 0 || scene !== playScene) return;
+  if (P.inv > 0 || P.stop > 0 || scene !== playScene) return;   // пока Почик держит игрока на разговоре, больше никто не бьёт
   P.hp -= n; P.inv = 90; P.vy = -3.5; shake = 6; sfx(180, 0.2, 'sawtooth', -100, 0.07);
   if (P.hp <= 0) die(c);
 }
@@ -440,6 +489,33 @@ function updBear(b) {
 }
 
 // ---------- новые враги: поведение (dx, dy — вектор от врага к игроку)
+// Где окажется игрок через n кадров, если продолжит двигаться так же: прогон его физики на копии
+// (текущая скорость и нажатые клавиши, прыжок доигрывается до приземления, стены и обрывы учитываются).
+function predictP(n) {
+  const q = { x: P.x, y: P.y, w: P.w, h: P.h, vx: P.vx, vy: P.vy, ground: false }, ax = keys.right - keys.left;
+  for (let i = 0; i < n; i++) {
+    q.vx += (ax * 2 - q.vx) * 0.3; if (Math.abs(q.vx) < 0.05) q.vx = 0;
+    if (!keys.jump && q.vy < -2.5) q.vy = -2.5;
+    q.vy = Math.min(7, q.vy + 0.35); q.ground = false;
+    moveX(q, q.vx); moveY(q, q.vy);
+    if (q.y > H * T) break; // упал в яму — дальше считать нечего
+  }
+  return q;
+}
+// Скорости для броска под действием тяжести g из точки (sx, sy) — центра снаряда — по игроку с упреждением.
+// Время полёта зависит от расстояния (≈ speed пикселей за кадр, в пределах tmin..tmax), а цель — это то место,
+// где игрок будет именно через это время, поэтому цель и время подбираются итерациями.
+function lobAim(sx, sy, g, speed, tmin, tmax) {
+  const pc = () => [P.x + P.w / 2, P.y + P.h / 2];
+  let n = clamp(Math.round(Math.abs(pc()[0] - sx) / speed), tmin, tmax), q;
+  for (let i = 0; i < 4; i++) {
+    q = predictP(n);
+    n = clamp(Math.round(Math.hypot(q.x + q.w / 2 - sx, q.y + q.h / 2 - sy) / speed), tmin, tmax);
+  }
+  q = predictP(n);
+  // положение за n кадров при шаге «сначала скорость, потом сдвиг»: y = y0 + n·vy0 + g·n(n+1)/2
+  return { vx: (q.x + q.w / 2 - sx) / n, vy: (q.y + q.h / 2 - sy - g * n * (n + 1) / 2) / n, n };
+}
 const SCAM_LINES = ['ВАШ СЧЁТ!', 'ВЫ ВЫИГРАЛИ!', 'ГОСУСЛУГИ?', 'СЛУЖБА БЕЗОП.', 'НЕ ВЕШАЙТЕ!'];
 const ENEMY = {
   // DiabloFAT: веер из трёх огненных шаров
@@ -500,18 +576,29 @@ const ENEMY = {
     }
     if (ov(P, e, 3)) hurt(1, 'alt');
   },
-  // Опасный Почик: сидит на пеньке и раздаёт «цезарей» волной
+  // Опасный Почик: останавливает игрока и требует косарь. Платить нечем (всегда), поэтому в игрока летит
+  // огромный пень, и его надо успеть обойти. Остановка — один раз; дальше он просто швыряется пнями.
   poc(e, dx, dy) {
     e.face = dx < 0 ? -1 : 1; if (e.anim) e.anim--;
-    if (Math.abs(dx) < 170 && Math.abs(dy) < 70 && --e.cd <= 0) {
-      const dir = e.face;
-      shots.push({ k: 'cash', x: e.x + (dir > 0 ? 14 : -8), y: e.y + 6, y0: e.y + 6, vx: dir * 1.5, vy: 0, w: 12, h: 6, t: 0 });
-      L.pops.push({ x: e.x - 14, y: e.y - 20, s: 'ЦЕЗАРЬ!', t: 45 });
-      e.cd = 110; e.anim = 12; sfx(260, 0.1, 'triangle', 120, 0.04);
+    if (e.st === 0) {
+      if (!e.met && Math.abs(dx) < 110 && Math.abs(dy) < 60) {
+        e.met = true; e.st = 1; e.tm = 75; e.talk = 1; P.vx = 0; P.face = dx < 0 ? 1 : -1;
+        sfx(180, 0.25, 'square', 0, 0.05); sfx(140, 0.3, 'square', 0, 0.05);
+      } else if (e.met && Math.abs(dx) < 170 && Math.abs(dy) < 70 && --e.cd <= 0) { e.st = 2; e.tm = 38; e.talk = 0; sfx(220, 0.2, 'triangle', 200, 0.04); }
+    } else if (e.st === 1) {            // «Стой! Гони косарь!»
+      P.stop = 2;
+      if (--e.tm <= 0) { e.st = 2; e.tm = 60; L.pops.push({ x: P.x - 30, y: P.y - 12, s: 'НЕТ КОСАРЯ', t: 55 }); sfx(120, 0.3, 'sawtooth', -40, 0.05); }
+    } else {                            // не платишь? — замах и бросок
+      if (e.talk) P.stop = 2;
+      if (--e.tm <= 0) {
+        const v = lobAim(e.x + 8, e.y - 6, 0.15, 2.2, 52, 80);
+        shots.push({ k: 'stump', x: e.x + 8 - 9, y: e.y - 6 - 7, vx: v.vx, vy: v.vy, g: 0.15, w: 18, h: 14, rot: 0 });
+        P.stop = 0; e.st = 0; e.cd = 170; e.talk = 0; e.anim = 14; sfx(90, 0.35, 'sawtooth', 120, 0.07);
+      }
     }
     if (ov(P, e, 3)) hurt(1, 'poc');
   },
-  // Телефонные мошенники: медленно преследуют, если подойти близко
+  // Шайтаны (бывшие телефонные мошенники): медленно преследуют, если подойти близко
   tel(e) {
     const cx = e.x + e.w / 2, cy = e.y + e.h / 2, pdx = P.x + P.w / 2 - cx, pdy = P.y + P.h / 2 - cy, d = Math.hypot(pdx, pdy) || 1;
     if (d < 140) {
@@ -526,7 +613,7 @@ const ENEMY = {
     e.y += Math.sin(L.t * 0.08 + e.ph) * 0.3;
     if (ov(P, e, 2)) hurt(1, 'tel');
   },
-  // Fail2ban: молоток следует за игроком, фиксируется и бьёт сверху
+  // Фейл2бан: молоток следует за игроком, фиксируется и бьёт сверху
   ban(e) {
     const px = P.x + P.w / 2, hit = () => ov(P, { x: e.hx, y: e.hy, w: 24, h: 12 }, 1);
     if (e.st === 0) {
@@ -579,13 +666,14 @@ const playScene = {
     for (const pl of L.plats) { pl.x += pl.vx; if (pl.x < pl.a) { pl.x = pl.a; pl.vx = Math.abs(pl.vx); } if (pl.x > pl.b) { pl.x = pl.b; pl.vx = -Math.abs(pl.vx); } }
     if (P.on) { moveX(P, P.on.vx); P.on = null; }
     // игрок
-    const ax = keys.right - keys.left;
+    const frozen = P.stop > 0; if (frozen) P.stop--;   // Почик остановил игрока: управление отключено
+    const ax = frozen ? 0 : keys.right - keys.left;
     P.vx += (ax * 2 - P.vx) * 0.3; if (Math.abs(P.vx) < 0.05) P.vx = 0;
     if (ax) P.face = ax;
-    P.buf = jumpPressed ? 7 : Math.max(0, P.buf - 1);
+    P.buf = jumpPressed && !frozen ? 7 : Math.max(0, P.buf - 1);
     P.coy = P.ground ? 7 : Math.max(0, P.coy - 1);
     if (P.buf && P.coy) { P.vy = -6.2; P.buf = 0; P.coy = 0; sfx(420, 0.12, 'square', 300, 0.04); }
-    if (!keys.jump && P.vy < -2.5) P.vy = -2.5;
+    if ((!keys.jump || frozen) && P.vy < -2.5) P.vy = -2.5;
     P.vy = Math.min(7, P.vy + 0.35);
     P.ground = false;
     moveX(P, P.vx);
@@ -619,19 +707,22 @@ const playScene = {
         e.face = dx < 0 ? -1 : 1;
         if (e.anim) e.anim--;
         if (Math.abs(dx) < 170 && Math.abs(dy) < 120 && --e.cd <= 0) {
-          const tt = 42 + Math.random() * 12;
-          shots.push({ k: 'b', x: e.x + 5, y: e.y, vx: dx / tt, vy: dy / tt - 0.075 * tt, g: 0.15, w: 5, h: 8, rot: 0 });
+          // целится не туда, где игрок сейчас, а туда, где он окажется, пока бутылка летит
+          const v = lobAim(e.x + 5 + 2.5, e.y + 4, 0.15, 2.6, 40, 62);
+          shots.push({ k: 'b', x: e.x + 5, y: e.y, vx: v.vx, vy: v.vy, g: 0.15, w: 5, h: 8, rot: 0 });
           e.cd = L.cdBase + Math.random() * 30; e.anim = 12; sfx(300, 0.08, 'triangle', 200, 0.04);
         }
         if (ov(P, e, 3)) hurt(1, 'yarosh');
       } else if (e.t === 'd') {
-        const ag = Math.abs(dx) < 90 && Math.abs(dy) < 36;
-        if (ag && !e.ag) sfx(90, 0.25, 'sawtooth', 60, 0.06);
+        // баланс: зона обнаружения поуже, перед рывком «!» и пауза (игрок успевает среагировать), рывок помедленнее
+        const ag = Math.abs(dx) < 80 && Math.abs(dy) < 32;
+        if (ag && !e.ag) { sfx(90, 0.25, 'sawtooth', 60, 0.06); e.warn = 20; }
         e.ag = ag; if (ag && Math.abs(dx) > 3) e.dir = dx < 0 ? -1 : 1;
-        e.x += e.dir * (ag ? 1.7 : 0.7);
+        let sp = 0.7; if (ag) { if (e.warn > 0) { e.warn--; sp = 0; } else sp = 1.4; }
+        e.x += e.dir * sp;
         if (e.x < e.x0) { e.x = e.x0; if (!ag) e.dir = 1; }
         if (e.x > e.x1) { e.x = e.x1; if (!ag) e.dir = -1; }
-        if (P.inv <= 0 && ov(P, e, 3)) { P.hp = 0; die('dynex'); return; }
+        if (P.inv <= 0 && !P.stop && ov(P, e, 4)) { P.hp = 0; die('dynex'); return; }
       } else if (ENEMY[e.t]) {
         ENEMY[e.t](e, dx, dy);
       } else if (e.t === 'f') {
@@ -654,11 +745,11 @@ const playScene = {
         return true;
       }
       s.vy += s.g || 0; s.x += s.vx; s.y += s.vy; s.rot = (s.rot || 0) + 0.25;
-      if (s.k === 'cash') s.y = s.y0 + Math.sin(++s.t * 0.1) * 16; // купюра летит волной
       const ground = s.k === 'wave' || s.k === 'sweep';
       if (!ground && tileAt(s.x + s.w / 2, s.y + s.h / 2)) {
-        burst(s.x, s.y, { b: '#c05f10', crystal: '#f7f1fa', fire: '#ff8a2a', tok: '#4aa3ff', cash: '#8ee0a8' }[s.k] || '#ff4fd8', 5);
+        burst(s.x, s.y, { b: '#c05f10', crystal: '#f7f1fa', fire: '#ff8a2a', tok: '#4aa3ff', stump: '#8a5a2c' }[s.k] || '#ff4fd8', s.k === 'stump' ? 14 : 5);
         if (s.k === 'b') sfx(1200, 0.05, 'square', -600, 0.03);
+        if (s.k === 'stump') { shake = Math.max(shake, 5); sfx(70, 0.3, 'sawtooth', -20, 0.09); }
         return false;
       }
       if (ov(P, s)) { hurt(1, s.k); if (!ground) return false; }
@@ -710,7 +801,7 @@ const playScene = {
       if (e.dead) continue;
       if (e.t === 'y') spr(IMG.yarosh, e.x, e.y - (e.anim ? 2 : 0), e.face < 0);
       else if (e.t === 'd') {
-        spr(IMG.dynex, e.x, e.y + (Math.floor(frame / (e.ag ? 4 : 8)) % 2), e.dir < 0);
+        spr(IMG.dynex, e.x, e.y + (e.warn > 0 ? 0 : Math.floor(frame / (e.ag ? 4 : 8)) % 2), e.dir < 0);
         if (e.ag) text('!', e.x + 8, e.y - 11, '#ff3b3b', 8, 'center');
       } else if (e.t === 'fat') spr(IMG.fat, e.x, e.y - (e.anim ? 1 : 0), false);
       else if (e.t === 'ari') {
@@ -720,7 +811,10 @@ const playScene = {
         spr(IMG.bar, e.x + (e.st === 1 ? (frame % 4 < 2 ? -1 : 1) : 0), e.y + (e.st === 1 ? 2 : 0), e.dir > 0);
         if (e.st === 1) text('!', e.x + 11, e.y - 11, '#ff3b3b', 8, 'center');
       } else if (e.t === 'alt') spr(IMG.alt, e.x, e.y, e.face < 0);
-      else if (e.t === 'poc') spr(IMG.poc, e.x, e.y - (e.anim ? 1 : 0), e.face < 0);
+      else if (e.t === 'poc') {
+        spr(IMG.poc, e.x, e.y - (e.anim ? 1 : 0), e.face < 0);
+        if (e.st === 2) spr(IMG.stump, e.x + 8 - 9, e.y - 19 + (frame % 4 < 2 ? 0 : 1), false);   // замах пнём
+      }
       else if (e.t === 'tel') {
         spr(IMG.tel, e.x, e.y, false);
         if (e.ag && frame % 16 < 8) { ctx.fillStyle = '#ffd23e'; for (const o of [-1, 1]) { ctx.fillRect(e.x + 5 + o * 9, e.y + 2, 1, 3); ctx.fillRect(e.x + 5 + o * 12, e.y + 4, 1, 3); ctx.fillRect(e.x + 5 + o * 9, e.y + 7, 1, 3); } }
@@ -731,7 +825,7 @@ const playScene = {
         ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(e.hx) - 1, Math.round(e.hy) - 1, 26, 14);
         ctx.fillStyle = '#e03030'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy), 24, 12);
         ctx.fillStyle = '#ff8a7a'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy), 24, 2);
-        text('BAN', Math.round(e.hx) + 12, Math.round(e.hy) + 3, '#fff', 6, 'center');
+        text('БАН', Math.round(e.hx) + 12, Math.round(e.hy) + 3, '#fff', 6, 'center');
       } else if (e.t === 'ano') {
         for (let i = 0; i < 3; i++) spr(IMG.ano, e.x + i * 14, e.y, false);
       } else if (e.t === 'duo') {
@@ -742,11 +836,19 @@ const playScene = {
         for (let i = 0; i < 4; i++) { ctx.fillStyle = ['#7a3cff', '#19ff9c', '#ff4fd8', '#ffffff'][(i + Math.floor(frame / 6)) % 4]; ctx.fillRect(e.x + i * 2, e.y + i * 3, 16 - i * 4, 26 - i * 6); }
       }
     }
+    // реплики Почика
+    for (const e of L.ents) {
+      if (e.t !== 'poc' || !e.talk || e.st === 0) continue;
+      const lines = e.st === 1 ? ['СТОЙ!', 'ГОНИ КОСАРЬ!'] : ['НЕ ПЛАТИШЬ?', 'ДЕРЖИ ПЕНЬ!'];
+      const w = Math.max(...lines.map(l => textW(l, 6))) + 8, bh = lines.length * 8 + 4, bx = Math.round(e.x + 8 - w / 2), by = Math.round(e.y - (e.st === 2 ? 24 : 8) - bh);
+      box(bx, by, w, bh, '#fff', '#17161c');
+      lines.forEach((l, i) => text(l, bx + w / 2, by + 3 + i * 8, '#17161c', 6, 'center', false));
+    }
     // имена особых врагов, когда игрок рядом
     for (const e of L.ents) {
-      if (e.dead || !(e.name || e.t === 'duo')) continue;
+      if (e.dead || !(e.name || e.t === 'duo') || (e.t === 'poc' && e.talk && e.st)) continue;
       if (Math.abs(P.x - (e.x + e.w / 2)) > 120 || Math.abs(P.y - (e.y + e.h / 2)) > 110) continue;
-      if (e.t === 'duo') { text('Navalny', e.ax + 6, e.gy - 27, '#ffe27a', 6, 'center'); text('V. V. Putin', e.bx + 6, e.gy - 36, '#ffe27a', 6, 'center'); }
+      if (e.t === 'duo') { text('Навальный', e.ax + 6, e.gy - 27, '#ffe27a', 6, 'center'); text('В. В. Путин', e.bx + 6, e.gy - 36, '#ffe27a', 6, 'center'); }
       else if (e.t === 'ban') text(e.name, e.hx + 12, e.hy - 9, '#ffe27a', 6, 'center');
       else text(e.name, e.x + e.w / 2, e.y - (e.t === 'bar' ? 22 : 9), '#ffe27a', 6, 'center');
     }
@@ -770,7 +872,7 @@ const playScene = {
       else if (s.k === 'usb') spr(IMG.flash, s.x, s.y);
       else if (s.k === 'fire') { ctx.fillStyle = '#e03020'; ctx.fillRect(s.x, s.y + 1, 7, 5); ctx.fillRect(s.x + 1, s.y, 5, 7); ctx.fillStyle = frame % 4 < 2 ? '#ffd23e' : '#ff8a2a'; ctx.fillRect(s.x + 2, s.y + 2, 3, 3); }
       else if (s.k === 'tok') { ctx.fillStyle = '#17161c'; ctx.fillRect(s.x - 1, s.y - 1, 8, 8); ctx.fillStyle = '#4aa3ff'; ctx.fillRect(s.x, s.y, 6, 6); ctx.fillStyle = '#fff'; ctx.fillRect(s.x + 1, s.y + 1, 2, 2); ctx.fillRect(s.x + 4, s.y + 4, 1, 1); }
-      else if (s.k === 'cash') spr(IMG.cash, s.x, s.y, s.vx < 0);
+      else if (s.k === 'stump') { ctx.save(); ctx.translate(Math.round(s.x + 9), Math.round(s.y + 7)); ctx.rotate(s.rot * 0.35); ctx.drawImage(IMG.stump, -9, -9.5); ctx.restore(); }
       else if (s.k === 'glitch') { ctx.fillStyle = frame % 4 < 2 ? '#ff4fd8' : '#19ff9c'; ctx.fillRect(s.x, s.y, 6, 6); ctx.fillStyle = '#fff'; ctx.fillRect(s.x + 2, s.y + 2, 2, 2); }
       else if (s.k === 'sweep') { ctx.fillStyle = '#ff4fd8'; ctx.fillRect(s.x, s.y, 10, 10); ctx.fillStyle = '#19ff9c'; ctx.fillRect(s.x + 2, s.y + (frame % 6), 6, 2); }
       else if (s.k === 'wave') { ctx.fillStyle = '#f7f1fa'; ctx.fillRect(s.x, s.y + 3, 10, 6); ctx.fillRect(s.x + 3, s.y, 4, 3); }
@@ -952,8 +1054,8 @@ function captchaScene() {
       if (st === 1) { const a = t * 0.3; ctx.fillStyle = '#4aa3ff'; for (let i = 0; i < 5; i++) ctx.fillRect(b.x + 23 + Math.cos(a + i * 0.5) * 7, b.y + 29 + Math.sin(a + i * 0.5) * 7, 2, 2); }
       if (st === 3) { ctx.fillStyle = '#2ecc71'; for (let i = 0; i < 5; i++) ctx.fillRect(b.x + 18 + i, b.y + 29 + i, 2, 3); for (let i = 0; i < 9; i++) ctx.fillRect(b.x + 23 + i, b.y + 33 - i, 2, 3); }
       if (st === 2) { ctx.fillStyle = '#e03030'; for (let i = 0; i < 12; i++) { ctx.fillRect(b.x + 18 + i, b.y + 24 + i, 2, 2); ctx.fillRect(b.x + 29 - i, b.y + 24 + i, 2, 2); } }
-      ctx.textAlign = 'left'; setFont(8); ctx.fillStyle = '#17161c'; ctx.fillText('Я не холос', b.x + 46, b.y + 26);
-      setFont(6); ctx.fillStyle = '#9a9aa6'; ctx.textAlign = 'right'; ctx.fillText('холоКАПЧА', b.x + b.w - 6, b.y + b.h - 10);
+      text('Я не холос', b.x + 46, b.y + 26, '#17161c', 8, 'left', false);
+      text('холоКАПЧА', b.x + b.w - 6, b.y + b.h - 10, '#9a9aa6', 6, 'right', false);
       const msg = st === 0 ? (tries ? 'ПОПРОБУЙ ЕЩЁ РАЗ' : 'НАЖМИ НА ГАЛОЧКУ') : st === 1 ? 'ПРОВЕРЯЕМ...' : st === 2 ? 'ХМ. ПОХОЖ НА ХОЛОСА.' : 'ЛАДНО, ВЕРИМ.';
       text(msg, 160, 136, st === 2 ? '#ff5a5a' : st === 3 ? '#2ecc71' : '#fff', 8, 'center');
     },
@@ -1013,10 +1115,10 @@ function cardScene(pages, done, z = 3) {
 // ---------- поражение: Ведмедик Бо
 function bubble(x, y, w, lines) {
   box(x, y, w, lines.length * 12 + 8, '#fff', '#17161c');
-  lines.forEach((l, i) => { setFont(8); ctx.textAlign = 'center'; ctx.fillStyle = '#17161c'; ctx.fillText(l, x + w / 2, y + 6 + i * 12); });
+  lines.forEach((l, i) => text(l, x + w / 2, y + 6 + i * 12, '#17161c', 8, 'center', false));
 }
 function deathScene(n, c) {
-  let t = 0; const bx = 180, by = 34;
+  let t = 0; const dyn = c === 'dynex', bx = dyn ? 186 : 180, by = dyn ? 62 : 34;   // «порвал туза» — это Дынекс, а не медведь
   return {
     update() {
       t++;
@@ -1026,8 +1128,10 @@ function deathScene(n, c) {
     },
     draw() {
       ctx.fillStyle = '#120a0a'; ctx.fillRect(0, 0, VW, VH);
-      spr(t > 30 && t < 62 ? IMG.bearOpen : IMG.bear, bx, by + (t >= 62 && t < 90 ? Math.sin(t) * 2 : 0), false, 5);
-      if (t < 60) { const k = t / 60; spr(IMG.holos, 40 + (bx + 42 - 40) * k, 120 + (by + 50 - 120) * k - Math.sin(k * 3.14) * 40, false, 2 - k); }
+      const open = t > 30 && t < 62, jy = by + (t >= 62 && t < 90 ? Math.sin(t) * 2 : 0);
+      if (dyn) spr(open ? IMG.dynexOpen : IMG.dynex, bx, jy, true, 5);
+      else spr(open ? IMG.bearOpen : IMG.bear, bx, jy, false, 5);
+      if (t < 60) { const k = t / 60, mx = dyn ? 40 : 42, my = dyn ? 40 : 50; spr(IMG.holos, 40 + (bx + mx - 40) * k, 120 + (by + my - 120) * k - Math.sin(k * 3.14) * 40, false, 2 - k); }
       if (c === 'dynex') text('ДЫНЕКС ПОРВАЛ ТУЗА', 160, 8, '#ff5a5a', 8, 'center');
       if (t > 100) bubble(16, 60, 150, ['ФУ БЛЯ,', 'НЕВКУСНО']);
       if (t > 150 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА', 160, 166, '#9a9aa6', 6, 'center');

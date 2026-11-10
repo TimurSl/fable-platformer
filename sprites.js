@@ -183,6 +183,12 @@ SPR.bearOpen[10] = '.koooookkkkkkoooook.';
 SPR.bearOpen[11] = '.kooookrrrrrrkooook.';
 SPR.bearOpen[12] = '.koooookkkkkkoooook.';
 
+// Дынекс с раскрытой пастью (для экрана поражения «порвал туза»)
+SPR.dynexOpen = SPR.dynex.slice();
+SPR.dynexOpen[6] = '..kddlkkkkkddk..';
+SPR.dynexOpen[7] = '...kdkrrrrkdk...';
+SPR.dynexOpen[8] = '.kkkkkkrrkkkkkk.';
+
 // ---- новые враги. Симметричные спрайты заданы левой половиной: mir() зеркалит её.
 const mir = rows => rows.map(r => r + [...r].reverse().join(''));
 const mir1 = rows => rows.map(r => r + [...r].reverse().slice(1).join('')); // с общим центральным столбцом
@@ -371,6 +377,28 @@ Object.assign(SPR, {
     '.kUUk.',
     '.kkkk.',
   ]),
+  // Большой пень: Почик швыряет им в того, кто не заплатил косарь
+  stump: mir([
+    '...kkkkkk',
+    '..kccccYY',
+    '.kcYYYYYc',
+    '.kcYcccYc',
+    'kcYcYYYcY',
+    'kcYcYccYc',
+    'kcYcYYYcY',
+    '.kcYcccYc',
+    '.kcYYYYYc',
+    '..kccccYY',
+    '.knnNnnNn',
+    'knnNnnnNn',
+    'knnnnNnnn',
+    'knNnnnnNn',
+    'knnnNnnnn',
+    'knnnnnNnn',
+    '.knNnnnnN',
+    '..kkNnnkk',
+    '...kkkkkk',
+  ]),
   // Подводная мина
   mine: mir1([
     '......k',
@@ -386,15 +414,6 @@ Object.assign(SPR, {
     '...kkdd',
     '..k..kg',
     '......k',
-  ]),
-  // Купюра «Цезарь» (Почик раздаёт)
-  cash: mir([
-    'kkkkkk',
-    'kFFFFF',
-    'kFFfff',
-    'kFFfff',
-    'kFFFFF',
-    'kkkkkk',
   ]),
 });
 
