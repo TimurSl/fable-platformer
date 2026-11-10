@@ -379,6 +379,27 @@ Object.assign(SPR, {
     '.kUUk.',
     '.kkkk.',
   ]),
+  // Полицейский Путина: фуражка с кокардой, тёмно-синяя форма, ремень
+  police: mir([
+    '...kkk',
+    '..kUUU',
+    '.kUUUy',
+    'kkkkkk',
+    '.kssss',
+    '.kssks',
+    '.kssss',
+    '..kskk',
+    '...kss',
+    '.kUUUw',
+    'kUUUUU',
+    'kUyUUU',
+    'kUUUUU',
+    'kUkkkk',
+    'kUUUUU',
+    '.kUUk.',
+    '.kUUk.',
+    '.kkkk.',
+  ]),
   // Большой пень: Почик швыряет им в того, кто не заплатил косарь
   stump: mir([
     '...kkkkkk',
@@ -561,4 +582,6 @@ const FLAGS = [
 const FLAG_NAMES = FLAGS.map(f => f[0]);
 FLAGS.forEach((f, i) => { SPR['flag' + i] = f[1]; });
 
+// Навальный, облитый зелёнкой (для экрана поражения): лицо и руки зелёные, брызги на рубашке
+SPR.navyGreen = SPR.navy.map((r, y) => r.replace(/s/g, 'G').replace(/S/g, 'f').replace(/w/g, (c, x) => (x + y) % 3 ? c : 'G'));
 if (typeof module !== 'undefined') module.exports = { PAL, SPR, FLAG_NAMES };
