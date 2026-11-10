@@ -14,19 +14,23 @@
     image-rendering:pixelated;image-rendering:crisp-edges;background:#000}
   @supports (height:100dvh){canvas{width:min(100vw,calc(100dvh*16/9))}}
   @media (orientation:landscape){body{align-items:center}}
-  #pad{display:none;position:fixed;left:0;right:0;bottom:max(14px,env(safe-area-inset-bottom));
-    padding:0 max(14px,env(safe-area-inset-left)) 0 max(14px,env(safe-area-inset-right));
-    justify-content:space-between;pointer-events:none}
+  /* Экранные кнопки (показываются только на сенсорных устройствах — решает скрипт, класс .on).
+     Крупные плоские круги со стрелкой, без рамок и подписей. Нажатия ловит скрипт по координатам
+     (зона шире кнопки), сами кнопки только рисуются. */
+  #pad{display:none;position:fixed;left:0;right:0;bottom:max(16px,env(safe-area-inset-bottom));
+    padding:0 max(16px,env(safe-area-inset-left)) 0 max(16px,env(safe-area-inset-right));
+    justify-content:space-between;align-items:flex-end;pointer-events:none}
   #pad.on{display:flex}
   #pad[data-mode="none"]{display:none}
   #pad button.dn{display:none}
-  #pad[data-mode="swim"] button.dn{display:block}
-  #pad div{display:flex;gap:12px}
-  /* нажатия ловит скрипт по координатам (зона шире кнопки), сами кнопки только рисуются */
-  #pad button{pointer-events:none;width:clamp(56px,16vmin,76px);height:clamp(56px,16vmin,76px);border-radius:14px;
-    border:3px solid #fff8;background:#ffffff22;color:#fff;font:28px monospace;touch-action:none;padding:0}
-  #pad button.act{background:#ffffff66}
-  #pad button.j{width:clamp(72px,22vmin,100px)}
+  #pad[data-mode="swim"] button.dn{display:flex}
+  #pad div{display:flex;align-items:flex-end;gap:clamp(14px,4vmin,28px)}
+  #pad button{pointer-events:none;display:flex;align-items:center;justify-content:center;padding:0;border:0;
+    width:clamp(84px,25vmin,136px);height:clamp(84px,25vmin,136px);border-radius:50%;
+    background:#ffffff30;color:#ffffffd0;touch-action:none;-webkit-tap-highlight-color:transparent}
+  #pad button.act{background:#ffffff70;color:#fff}
+  #pad button.j{width:clamp(108px,33vmin,176px);height:clamp(108px,33vmin,176px)}
+  #pad button svg{width:44%;height:44%;fill:currentColor}
   #fs{position:fixed;z-index:5;left:50%;top:max(6px,env(safe-area-inset-top));transform:translateX(-50%);
     width:34px;height:34px;padding:6px;box-sizing:border-box;border-radius:8px;border:2px solid #fff6;
     background:#00000066;color:#fff;opacity:.6;cursor:pointer;touch-action:manipulation}
@@ -46,8 +50,14 @@
 </button>
 <div class="fontload">Хх</div>
 <div id="pad">
-  <div><button data-k="left">◀</button><button data-k="right">▶</button></div>
-  <div><button class="dn" data-k="down">▼</button><button class="j" data-k="jump">▲</button></div>
+  <div>
+    <button data-k="left" aria-label="Влево"><svg viewBox="0 0 24 24"><path d="M17 3L5 12l12 9z"/></svg></button>
+    <button data-k="right" aria-label="Вправо"><svg viewBox="0 0 24 24"><path d="M7 3l12 9L7 21z"/></svg></button>
+  </div>
+  <div>
+    <button class="dn" data-k="down" aria-label="Вниз"><svg viewBox="0 0 24 24"><path d="M3 7l9 12 9-12z"/></svg></button>
+    <button class="j" data-k="jump" aria-label="Прыжок"><svg viewBox="0 0 24 24"><path d="M3 17l9-12 9 12z"/></svg></button>
+  </div>
 </div>
 <script src="sprites.js"></script>
 <script src="game.js"></script>
