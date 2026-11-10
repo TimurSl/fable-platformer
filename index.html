@@ -12,24 +12,42 @@
   body{display:flex;align-items:flex-start;justify-content:center}
   canvas{display:block;width:min(100vw,calc(100vh*16/9));height:auto;aspect-ratio:16/9;
     image-rendering:pixelated;image-rendering:crisp-edges;background:#000}
+  @supports (height:100dvh){canvas{width:min(100vw,calc(100dvh*16/9))}}
   @media (orientation:landscape){body{align-items:center}}
   #pad{display:none;position:fixed;left:0;right:0;bottom:max(14px,env(safe-area-inset-bottom));
-    padding:0 14px;justify-content:space-between;pointer-events:none}
+    padding:0 max(14px,env(safe-area-inset-left)) 0 max(14px,env(safe-area-inset-right));
+    justify-content:space-between;pointer-events:none}
   #pad.on{display:flex}
+  #pad[data-mode="none"]{display:none}
+  #pad button.dn{display:none}
+  #pad[data-mode="swim"] button.dn{display:block}
   #pad div{display:flex;gap:12px}
-  #pad button{pointer-events:auto;width:72px;height:72px;border-radius:14px;border:3px solid #fff8;
-    background:#ffffff22;color:#fff;font:28px monospace;touch-action:none}
+  /* нажатия ловит скрипт по координатам (зона шире кнопки), сами кнопки только рисуются */
+  #pad button{pointer-events:none;width:clamp(56px,16vmin,76px);height:clamp(56px,16vmin,76px);border-radius:14px;
+    border:3px solid #fff8;background:#ffffff22;color:#fff;font:28px monospace;touch-action:none;padding:0}
   #pad button.act{background:#ffffff66}
-  #pad button.j{width:96px}
+  #pad button.j{width:clamp(72px,22vmin,100px)}
+  #fs{position:fixed;z-index:5;left:50%;top:max(6px,env(safe-area-inset-top));transform:translateX(-50%);
+    width:34px;height:34px;padding:6px;box-sizing:border-box;border-radius:8px;border:2px solid #fff6;
+    background:#00000066;color:#fff;opacity:.6;cursor:pointer;touch-action:manipulation}
+  #fs:hover,#fs:active{opacity:1}
+  #fs svg{display:block;width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:square}
+  #fs .x{display:none} #fs.on .e{display:none} #fs.on .x{display:block}
+  #fs[hidden]{display:none}
+  @media (orientation:portrait){#fs{top:calc(min(100vw,100vh*16/9)*9/16 + 8px)}}
   .fontload{font-family:"Press Start 2P";position:absolute;opacity:0;pointer-events:none}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<button id="fs" tabindex="-1" aria-label="Полный экран" title="Полный экран (F)">
+  <svg class="e" viewBox="0 0 20 20"><path d="M2 7V2h5M13 2h5v5M18 13v5h-5M7 18H2v-5"/></svg>
+  <svg class="x" viewBox="0 0 20 20"><path d="M7 2v5H2M18 7h-5V2M13 18v-5h5M2 13h5v5"/></svg>
+</button>
 <div class="fontload">Хх</div>
 <div id="pad">
   <div><button data-k="left">◀</button><button data-k="right">▶</button></div>
-  <div><button class="j" data-k="jump">▲</button></div>
+  <div><button class="dn" data-k="down">▼</button><button class="j" data-k="jump">▲</button></div>
 </div>
 <script src="sprites.js"></script>
 <script src="game.js"></script>

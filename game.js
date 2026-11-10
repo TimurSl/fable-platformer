@@ -2,6 +2,8 @@
 // ХОЛОС: ЯДРО 8 — пиксельный браузерный платформер. Без движка, чистый Canvas 2D.
 
 const VW = 320, VH = 180, SC = 3, T = 16, H = 11;
+const LAST = 20;   // номер последнего уровня — босс МрДрНос в мета-пространстве
+const SALT = 99;   // секретный уровень «Солевая шахта» (раньше был 11)
 const cv = document.getElementById('c');
 cv.width = VW * SC; cv.height = VH * SC;
 const ctx = cv.getContext('2d');
@@ -32,7 +34,7 @@ function spr(img, x, y, flip, s = 1) {
 function setFont(size) { ctx.font = size + 'px "Press Start 2P", monospace'; ctx.textBaseline = 'top'; }
 function text(s, x, y, col = '#fff', size = 8, align = 'left') {
   setFont(size); ctx.textAlign = align;
-  if (col !== '#17161c') { ctx.fillStyle = '#000'; ctx.fillText(s, x + 1, y + 1); }
+  if (col !== '#17161c' && col !== '#a02020' && col !== '#2d4c8f') { ctx.fillStyle = '#000'; ctx.fillText(s, x + 1, y + 1); }
   ctx.fillStyle = col; ctx.fillText(s, x, y);
 }
 function wrap(s, maxW, size = 8) {
@@ -67,11 +69,15 @@ function sfx(f, d = 0.1, type = 'square', slide = 0, vol = 0.05) {
 }
 
 // ---------- ввод
-const keys = { left: 0, right: 0, jump: 0 };
+const keys = { left: 0, right: 0, jump: 0, down: 0 };
 let jumpPressed = false, anyPressed = false, click = null;
-const KM = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'jump', KeyW: 'jump', Space: 'jump', KeyZ: 'jump' };
+const codes = new Set(); // коды клавиш, нажатые за этот тик (для меню и мини-игр)
+const KM = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'jump', KeyW: 'jump', Space: 'jump', KeyZ: 'jump', ArrowDown: 'down', KeyS: 'down' };
 addEventListener('keydown', e => {
   const k = KM[e.code];
+  codes.add(e.code);
+  if (e.code === 'KeyF' && !e.repeat) toggleFs();
+  if (e.code === 'ArrowDown' || e.code === 'ArrowUp') e.preventDefault();
   if (k) { e.preventDefault(); if (k === 'jump' && !keys.jump) jumpPressed = true; keys[k] = 1; }
   if (!e.repeat && (e.code === 'Enter' || e.code === 'Space' || k === 'jump')) anyPressed = true;
   initAudio();
@@ -85,17 +91,66 @@ cv.addEventListener('pointerdown', e => {
 });
 const pad = document.getElementById('pad');
 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) pad.classList.add('on');
-pad.querySelectorAll('button').forEach(b => {
-  const k = b.dataset.k;
-  const dn = e => { e.preventDefault(); if (k === 'jump' && !keys.jump) { jumpPressed = true; anyPressed = true; } keys[k] = 1; b.classList.add('act'); initAudio(); };
-  const up = e => { e.preventDefault(); keys[k] = 0; b.classList.remove('act'); };
-  b.addEventListener('pointerdown', dn);
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(n => b.addEventListener(n, up));
-});
+// Экранные кнопки: один обработчик на всё окно. Касание привязано к pointerId, палец можно
+// вести с кнопки на кнопку, а зона нажатия у кнопки шире видимой (у прыжка — заметно шире).
+const padBtns = [...pad.querySelectorAll('button')].map(b => ({ b, k: b.dataset.k, grow: b.dataset.k === 'jump' ? 28 : 10, held: false }));
+const padPtr = new Map(); // pointerId -> нажатая кнопка (null, если палец ушёл с кнопок)
+const padActive = () => pad.classList.contains('on') && pad.dataset.mode !== 'none';
+function padHit(x, y) {
+  let best = null, bs = 1e9;
+  for (const o of padBtns) {
+    const r = o.b.getBoundingClientRect(); if (!r.width) continue;
+    const dx = Math.max(r.left - x, 0, x - r.right), dy = Math.max(r.top - y, 0, y - r.bottom), d = Math.hypot(dx, dy);
+    if (d > o.grow) continue;
+    const score = d - (o.k === 'jump' ? 8 : 0); // в спорной зоне между кнопками выигрывает прыжок
+    if (score < bs) { bs = score; best = o.k; }
+  }
+  return best;
+}
+function padSync() {
+  const on = new Set(padPtr.values());
+  for (const o of padBtns) {
+    const h = on.has(o.k); if (h === o.held) continue;
+    o.held = h; o.b.classList.toggle('act', h); keys[o.k] = h ? 1 : 0;
+    if (h) { if (o.k === 'jump') { jumpPressed = true; anyPressed = true; } initAudio(); }
+  }
+}
+function padRelease() { padPtr.clear(); padSync(); }
+addEventListener('pointerdown', e => {
+  if (!padActive() || (e.target.closest && e.target.closest('#fs'))) return;
+  const k = padHit(e.clientX, e.clientY); if (!k) return;
+  e.preventDefault(); e.stopPropagation(); padPtr.set(e.pointerId, k); padSync();
+}, true);
+addEventListener('pointermove', e => {
+  if (!padPtr.has(e.pointerId)) return;
+  e.preventDefault(); padPtr.set(e.pointerId, padHit(e.clientX, e.clientY)); padSync();
+}, true);
+for (const n of ['pointerup', 'pointercancel']) addEventListener(n, e => { if (padPtr.delete(e.pointerId)) padSync(); }, true);
+addEventListener('blur', padRelease);
+document.addEventListener('visibilitychange', padRelease);
+
+// ---------- полный экран
+const fsBtn = document.getElementById('fs'), fsRoot = document.documentElement;
+const fsReq = fsRoot.requestFullscreen || fsRoot.webkitRequestFullscreen;
+const fsOn = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+if (!fsReq) fsBtn.hidden = true; // например, iPhone Safari не умеет
+function toggleFs() {
+  try {
+    if (fsOn()) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      try { screen.orientation.unlock(); } catch (e) { }
+    } else {
+      const lock = () => { try { screen.orientation.lock('landscape').catch(() => { }); } catch (e) { } };
+      const r = fsReq.call(fsRoot); if (r && r.then) r.then(lock).catch(() => { }); else lock();
+    }
+  } catch (e) { }
+}
+fsBtn.addEventListener('click', e => { e.preventDefault(); toggleFs(); fsBtn.blur(); initAudio(); });
+for (const n of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(n, () => { fsBtn.classList.toggle('on', fsOn()); padRelease(); });
 
 // ---------- сохранение
 function save(n) { try { localStorage.setItem('holos_lvl', String(n)); } catch (e) { } }
-function load() { try { return clamp(parseInt(localStorage.getItem('holos_lvl')) || 1, 1, 10); } catch (e) { return 1; } }
+function load() { try { return clamp(parseInt(localStorage.getItem('holos_lvl')) || 1, 1, LAST); } catch (e) { return 1; } }
 
 // ---------- зоны и сюжет
 const ZONES = [
@@ -104,15 +159,29 @@ const ZONES = [
   { name: 'ИЗРАИЛЬ', sky: ['#7cc6ee', '#eef7fa'], far: '#ddd6c2', near: '#beb59c', win: '#6d8fa8', gTop: '#f3eedd', gBody: '#cfc6ac', gDark: '#aea58c' },
   { name: 'МЕТА-ПРОСТРАНСТВО', sky: ['#07000f', '#1d0038'], gTop: '#19ff9c', gBody: '#16122a', gDark: '#241d44' },
   { name: 'СОЛЕВАЯ ШАХТА', sky: ['#120f18', '#2a2238'], gTop: '#f7f1fa', gBody: '#b9aec4', gDark: '#8d829a' },
+  { name: 'СИНАГОГА', sky: ['#1c1430', '#5a4358'], gTop: '#e6d3a0', gBody: '#8a6a4c', gDark: '#6b5038' },
+  { name: 'СЕРВЕРА VALVE', sky: ['#080b11', '#182030'], gTop: '#f08a1c', gBody: '#2b3140', gDark: '#3d4558' },
+  { name: 'ЗАКУЛИСЬЕ', sky: ['#1a1412', '#3b2c24'], gTop: '#d2a974', gBody: '#6b4a30', gDark: '#4a3220' },
 ];
-const zoneOf = n => n <= 3 ? 0 : n <= 6 ? 1 : n <= 9 ? 2 : n === 10 ? 3 : 4;
+// 1–3 Одесса, 4–6 Газа, 7–9 Израиль, 10 Синагога, 11–14 серверы Valve, 15–19 закулисье, 20 мета-пространство
+const zoneOf = n => n === SALT ? 4 : n <= 3 ? 0 : n <= 6 ? 1 : n <= 9 ? 2 : n === 10 ? 5 : n <= 14 ? 6 : n <= 19 ? 7 : 3;
+const MELVI = 'mƎλvi';
 const INTRO = {
   1: ['ПРЕДЫСТОРИЯ\n\nМрДрНос случайно запушил новую обнову для ВОТВ прямо в ядро Линукс. У всех, кто скачал ядро 8-й версии, Линукс сломался.',
     'ОДЕССА\n\nХолос решил сбежать из города и навалять Носатому.\n\nНа пути — бутылки Никиты Яроша и Дынекс. Дынексу не попадайся: порвёт туза.'],
-  4: ['ГАЗА\n\nХолос перепутал карты и вместо Израиля попал в Газу.\n\nМолодец, Холос.'],
-  7: ['ИЗРАИЛЬ\n\nХолос ищет МрДрНоса. Говорят, некий melvi знает дорогу в мета-пространство.'],
-  10: ['МЕТА-ПРОСТРАНСТВО\n\nВот он. Носатый.\n\nХватай царь-флешки и ставь ему нормальный дистрибутив.'],
-  11: ['СОЛЕВАЯ ШАХТА\n\nТут пахнет солью. И медведем.\n\nОчень большим медведем.'],
+  4: ['ГАЗА\n\nХолос доплыл, но перепутал карты и вместо Израиля попал в Газу.\n\nМолодец, Холос.'],
+  7: ['ИЗРАИЛЬ\n\nПаспорт сработал. Холос в Израиле.\n\nХолос ищет МрДрНоса. ' + MELVI + ' сказал, что знает дорогу в мета-пространство.'],
+  10: ['СИНАГОГА\n\nДорога в мета-пространство ведёт через синагогу.\n\nТут тихо, красиво и подозрительно много врагов.'],
+  11: ['СЕРВЕРА VALVE\n\nПод синагогой — серверные Valve. Гудит так, будто там майнят.\n\nFail2ban и Anonymous уже в курсе, что ты пришёл.'],
+  15: ['ЗАКУЛИСЬЕ\n\nХолос проломил декорации и оказался за кулисами самой игры.\n\nЗдесь сидят те, кого в игру не пускали.'],
+  20: ['МЕТА-ПРОСТРАНСТВО\n\nВот он. Носатый.\n\nХватай царь-флешки и ставь ему нормальный дистрибутив.'],
+  [SALT]: ['СОЛЕВАЯ ШАХТА\n\nТут пахнет солью. И медведем.\n\nОчень большим медведем.'],
+};
+const MINI_INTRO = {
+  4: ['МОРЕ\n\nХолос решил добраться до Израиля вплавь.\n\nПодводные мины и береговая охрана против.',
+    'Плыви вправо.\n\n← → ↑ ↓ — грести.\n\nМины взрываются, а береговая охрана бросает глубинные бомбы, если ты рядом с катером.'],
+  7: ['ГРАНИЦА ИЗРАИЛЯ\n\nБез паспорта не пускают. Придётся подделать.\n\nНа проверке сидит ' + MELVI + '.',
+    'Сверь правила слева с паспортом справа и поправь всё, что не так: тыкай в строку или жми ← →, ↑ ↓.\n\nЕсли ' + MELVI + ' заметит подделку, Холосу сделают обрезание. Игра окончена.'],
 };
 const END_TEXT = ['Нос повержен.\n\nХолос узнаёт всю правду о СИСТЕМ-Д СЛЕЖКЕ и проекте РЕДХАТ.',
   'Не выдержав запретных знаний, Холос выходит на новый план бытия...'];
@@ -121,35 +190,75 @@ const END_TEXT = ['Нос повержен.\n\nХолос узнаёт всю п
 let frame = 0, scene = null, L = null, P = null, shots = [], parts = [], safe = null, shake = 0;
 
 // ---------- построение уровней
+const SIZES = { y: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26],
+  fat: [16, 18], ari: [16, 18], bar: [22, 20], alt: [14, 18], poc: [16, 20], tel: [10, 12], ban: [24, 12], ano: [40, 16], duo: [12, 18] };
+const NAMES = { fat: 'DiabloFAT', ari: 'Ariraly', bar: 'Baratrum', alt: 'Sam Altman', poc: 'Dangerous Pochyk', tel: 'МОШЕННИКИ', ban: 'Fail2ban', ano: 'Anonymous' };
+// какие новые враги встречаются на уровне (первый раз каждый гарантированно появляется)
+const POOL = {
+  2: ['poc'], 3: ['poc'],
+  4: ['tel'], 5: ['tel', 'bar'], 6: ['tel', 'bar', 'poc'],
+  7: ['ari'], 8: ['ari', 'fat'], 9: ['ari', 'fat', 'bar'],
+  10: ['fat', 'ari', 'poc'],
+  11: ['ban', 'tel'], 12: ['ban', 'ano'], 13: ['ban', 'ano', 'bar'], 14: ['ban', 'ano', 'fat', 'tel'],
+  15: ['alt', 'duo'], 16: ['alt', 'duo', 'ari'], 17: ['alt', 'duo', 'ano'], 18: ['alt', 'duo', 'ban', 'bar'], 19: ['alt', 'duo', 'fat', 'tel', 'ari'],
+};
 function ent(t, x, y, extra) {
-  const size = { y: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26] }[t];
-  return Object.assign({ t, x, y, w: size[0], h: size[1] }, extra);
+  const size = SIZES[t];
+  return Object.assign({ t, x, y, w: size[0], h: size[1], name: NAMES[t] }, extra);
 }
 function buildLevel(n) {
   const R = rng(1000 + n * 77), ri = (a, b) => a + Math.floor(R() * (b - a + 1));
-  const W = 80 + n * 9;
+  const dn = Math.min(n, 12), pool = POOL[n] || [];   // сложность растёт до 12-го уровня, дальше держится
+  const W = 80 + dn * 9;
   const g = [...Array(H)].map(() => Array(W).fill('.'));
   const ents = [], plats = [];
-  let secret = null, gh = 3, x = 0, sinceFlash = 0, secretDone = false;
+  let secret = null, gh = 3, x = 0, sinceFlash = 0, secretDone = false, spCount = 0;
   const col = (cx, h) => { for (let y = H - h; y < H; y++) g[y][cx] = '#'; };
   const flat = len => { for (let i = 0; i < len && x < W; i++) col(x++, gh); };
   const top = () => (H - gh) * T;
-  const pGap = 0.2, pStep = pGap + 0.15, pYar = pStep + 0.14 + n * 0.012,
-    pDyn = pYar + (n >= 2 ? 0.07 + n * 0.012 : 0), pSpk = pDyn + (n >= 3 ? 0.1 : 0);
+  // полосы вероятностей: яма, ступенька, Ярош, Дынекс, шипы, особый враг, ровное место
+  const wt = [0.2, 0.15, 0.14 + dn * 0.012, dn >= 2 ? 0.07 + dn * 0.012 : 0, dn >= 3 ? 0.1 : 0, pool.length ? 0.17 : 0];
+  const wsum = wt.reduce((a, b) => a + b, 0), tot = wsum + Math.max(0.1, 1 - wsum);
+  const cum = []; wt.reduce((a, b, i) => (cum[i] = a + b), 0);
+  const [pGap, pStep, pYar, pDyn, pSpk, pSp] = cum;
+  const special = () => {
+    const t = spCount < pool.length ? pool[spCount] : pool[ri(0, pool.length - 1)];
+    spCount++;
+    if (t === 'fat') { flat(2); ents.push(ent('fat', x * T, top() - 18, { cd: 80 })); flat(ri(4, 5)); }
+    else if (t === 'ari') { flat(2); ents.push(ent('ari', x * T, top() - 18, { st: 0, cd: 50, vx: 0, vy: 0, face: -1 })); flat(ri(6, 7)); }
+    else if (t === 'bar') { flat(2); const a = x; flat(ri(8, 10)); ents.push(ent('bar', (a + 4) * T, top() - 20, { x0: a * T, x1: x * T - 22, dir: -1, st: 0, cd: 40 })); flat(2); }
+    else if (t === 'alt') { flat(2); const a = x; flat(ri(8, 10)); ents.push(ent('alt', (a + 4) * T, top() - 18, { x0: a * T + 2, x1: x * T - 16, cd: 100 })); flat(2); }
+    else if (t === 'poc') { flat(2); ents.push(ent('poc', x * T, top() - 20, { cd: 60 })); flat(ri(4, 5)); }
+    else if (t === 'tel') {
+      flat(3);
+      for (let i = 0; i < 2; i++) { const ex = (x + i * 2) * T, ey = top() - 62 - i * 16; ents.push(ent('tel', ex, ey, { hx: ex, hy: ey, ph: i * 2 })); }
+      flat(ri(6, 8));
+    }
+    else if (t === 'ban') {
+      flat(2); const a = x; flat(ri(7, 9)); const w = (x - a) * T;
+      ents.push(ent('ban', a * T, top() - 12, { w, gy: top(), hx: a * T + w / 2 - 12, hy: top() - 90, st: 0, bt: 0, vy: 0, cd: 30 })); flat(2);
+    }
+    else if (t === 'ano') { flat(2); const a = x; flat(ri(9, 11)); ents.push(ent('ano', (a + 3) * T, top() - 16, { x0: a * T, x1: x * T - 40, dir: -1, gy: top(), oy: 0, hv: 0, cd: 50 })); flat(2); }
+    else if (t === 'duo') { flat(2); const a = x; flat(ri(8, 10)); ents.push(ent('duo', a * T, top() - 18, { w: (x - a) * T, ph: R() * 6, gy: top(), ax: a * T, bx: a * T })); flat(2); }
+  };
   flat(9);
   if (n === 1) ents.push(ent('m', 5 * T, top() - 18, { say: 'Здарова, Холос. Стрелки — бежать, вверх или пробел — прыжок. Бутылки бьют, флешки лечат. Дынекса обходи: порвёт туза.' }));
+  if (n === 10) ents.push(ent('m', 5 * T, top() - 18, { say: 'Добро пожаловать в синагогу. Говорят, под полом гудят серверы Valve. Просто иди дальше и не трогай свечи.' }));
   while (x < W - 14) {
-    const r = R(), x0 = x;
+    const r = R() * tot, x0 = x;
+    // особый враг «по расписанию»: если отстаём с показом новых врагов, ставим принудительно
+    const due = pool.length && spCount < pool.length && x > W * (0.2 + 0.55 * spCount / pool.length);
     if (n === 8 && !secretDone && x > W * 0.55) {
       flat(5);
       ents.push(ent('m', (x - 4) * T, top() - 18, { say: 'Псс. Чуешь? Солью тянет... вон из той ямы. Я бы туда не прыгал. Или прыгал.' }));
       const gs = x; x += 3; secret = { x0: gs * T, x1: x * T };
       flat(4); secretDone = true; continue;
     }
-    if (r < pGap) {
+    if (due) special();
+    else if (r < pGap) {
       if (n >= 4 && R() < 0.45) {
         const len = ri(6, 7);
-        plats.push({ x: x * T + 2, y: top(), w: 32, h: 6, a: x * T + 2, b: (x + len) * T - 34, vx: 0.7 + n * 0.03 });
+        plats.push({ x: x * T + 2, y: top(), w: 32, h: 6, a: x * T + 2, b: (x + len) * T - 34, vx: 0.7 + dn * 0.03 });
         x += len;
       } else x += ri(2, 3);
       flat(3);
@@ -171,23 +280,26 @@ function buildLevel(n) {
       const k = ri(1, 2);
       for (let i = 0; i < k; i++) { col(x, gh); g[H - gh - 1][x] = '^'; x++; }
       flat(2);
-    } else flat(ri(3, 6));
+    } else if (r < pSp) special();
+    else flat(ri(3, 6));
     sinceFlash += x - x0;
-    if (sinceFlash > 26 + n * 2 && g[H - gh][x - 2] === '#' && g[H - gh - 1][x - 2] === '.') {
+    if (sinceFlash > 26 + Math.min(dn, 8) * 2 && g[H - gh][x - 2] === '#' && g[H - gh - 1][x - 2] === '.') {
       ents.push(ent('f', (x - 2) * T + 4, top() - 30)); sinceFlash = 0;
     }
   }
   while (x < W) col(x++, gh);
-  if (n === 9) ents.push(ent('m', (W - 8) * T, top() - 18, { say: 'Нос сидит в мета-пространстве. Прыгай в портал — закину. И наваляй ему за ядро.' }));
+  if (n === 9) ents.push(ent('m', (W - 8) * T, top() - 18, { say: 'Нос сидит в мета-пространстве. Дорога туда — через синагогу и серваки Valve. Прыгай в портал, закину.' }));
+  if (n === 14) ents.push(ent('m', (W - 8) * T, top() - 18, { say: 'Серваки Valve позади. Дальше закулисье самой игры. На декорации не смотри, там всё нарисовано.' }));
+  if (n === 19) ents.push(ent('m', (W - 8) * T, top() - 18, { say: 'Последний портал. За ним мета-пространство и Нос. Удачи, Холос. Одаа.' }));
   ents.push(ent('g', (W - 4) * T, top() - 26));
-  return { n, W, g, ents, plats, secret, zone: zoneOf(n), t: 0, cam: 0, cdBase: 120 - n * 6, spawnY: (H - 3) * T - 14, banner: [`УРОВЕНЬ ${n}: ${ZONES[zoneOf(n)].name}`, 130], pops: [] };
+  return { n, W, g, ents, plats, secret, zone: zoneOf(n), t: 0, cam: 0, cdBase: 120 - dn * 6, spawnY: (H - 3) * T - 14, banner: [`УРОВЕНЬ ${n}: ${ZONES[zoneOf(n)].name}`, 130], pops: [] };
 }
 function buildArena(n) {
   const W = 20, g = [...Array(H)].map(() => Array(W).fill('.'));
   for (let x = 0; x < W; x++) { g[H - 1][x] = '#'; g[H - 2][x] = '#'; }
   const groundY = (H - 2) * T, py = 6 * T;
   const L = { n, W, g, ents: [], plats: [], secret: null, zone: zoneOf(n), t: 0, cam: 0, cdBase: 100, spawnY: groundY - 14, groundY, pops: [] };
-  if (n === 10) {
+  if (n === LAST) {
     for (const x of [2, 3, 4, 5, 14, 15, 16, 17]) g[6][x] = '=';
     L.spots = [[56, py - 16], [248, py - 16], [156, groundY - 18], [20, groundY - 18], [290, groundY - 18]];
     L.boss = { kind: 'nos', x: 142, y: 14, w: 36, h: 40, hp: 9, max: 9, t: 0, ph: 0, cdA: 120, cdB: 200, cdF: 60, flash: 0, dead: 0, warn: null };
@@ -201,14 +313,20 @@ function buildArena(n) {
   return L;
 }
 function startLevel(n) {
-  if (n <= 10) save(n);
-  L = n >= 10 ? buildArena(n) : buildLevel(n);
+  if (n <= LAST) save(n);
+  L = n === LAST || n === SALT ? buildArena(n) : buildLevel(n);
   P = { x: 24, y: L.spawnY, w: 8, h: 13, vx: 0, vy: 0, hp: 3, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null };
   safe = { x: P.x, y: P.y }; shots = []; parts = []; shake = 0;
   scene = playScene;
 }
 function gotoLevel(n) {
   if (INTRO[n]) scene = cardScene(INTRO[n], () => startLevel(n), zoneOf(n)); else startLevel(n);
+}
+// переход на следующий уровень после портала: между 3 и 4, 6 и 7 — мини-игры
+const MINI = { 4: swimScene, 7: passportScene };
+function advance(n) {
+  if (MINI[n]) scene = cardScene(MINI_INTRO[n], () => { scene = MINI[n](() => gotoLevel(n)); }, n === 4 ? 0 : 2);
+  else gotoLevel(n);
 }
 
 // ---------- физика
@@ -250,7 +368,7 @@ function hurt(n, c) {
 function die(c) {
   if (scene !== playScene) return;
   sfx(300, 0.5, 'sawtooth', -260, 0.08);
-  scene = L.n === 11 ? crystalScene() : deathScene(L.n, c);
+  scene = L.n === SALT ? crystalScene() : deathScene(L.n, c);
 }
 function onFlash(e) {
   sfx(900, 0.12, 'square', 600);
@@ -321,6 +439,139 @@ function updBear(b) {
   spawnFlash(b);
 }
 
+// ---------- новые враги: поведение (dx, dy — вектор от врага к игроку)
+const SCAM_LINES = ['ВАШ СЧЁТ!', 'ВЫ ВЫИГРАЛИ!', 'ГОСУСЛУГИ?', 'СЛУЖБА БЕЗОП.', 'НЕ ВЕШАЙТЕ!'];
+const ENEMY = {
+  // DiabloFAT: веер из трёх огненных шаров
+  fat(e, dx, dy) {
+    e.face = dx < 0 ? -1 : 1; if (e.anim) e.anim--;
+    if (Math.abs(dx) < 175 && Math.abs(dy) < 110 && --e.cd <= 0) {
+      const a0 = Math.atan2(dy, dx);
+      for (const da of [-0.3, 0, 0.3]) shots.push({ k: 'fire', x: e.x + 5, y: e.y + 3, vx: Math.cos(a0 + da) * 1.7, vy: Math.sin(a0 + da) * 1.7, w: 7, h: 7 });
+      e.cd = 140; e.anim = 14; sfx(160, 0.25, 'sawtooth', 200, 0.05);
+    }
+    if (ov(P, e, 3)) hurt(1, 'fat');
+  },
+  // Ariraly: присела — прыгнула на игрока
+  ari(e, dx, dy) {
+    e.face = dx < 0 ? -1 : 1;
+    if (e.st === 0) {
+      if (Math.abs(dx) < 160 && Math.abs(dy) < 80 && --e.cd <= 0) { e.st = 1; e.cd = 26; sfx(500, 0.1, 'triangle', 200, 0.03); }
+    } else if (e.st === 1) {
+      if (--e.cd <= 0) { e.st = 2; e.vy = -5.4; e.vx = clamp(dx / 30, -2.8, 2.8); sfx(700, 0.15, 'square', 400, 0.04); }
+    } else {
+      e.vy = Math.min(7, e.vy + 0.35); e.ground = false;
+      moveX(e, e.vx); moveY(e, e.vy);
+      if (e.ground) { e.st = 0; e.cd = 60 + Math.random() * 40; e.vx = 0; }
+      if (e.y > H * T + 30) { e.dead = true; return; }
+    }
+    if (ov(P, e, 3)) hurt(1, 'ari');
+  },
+  // Baratrum: «!», разбег до стены, отдых
+  bar(e, dx, dy) {
+    if (e.st === 0) {
+      e.dir = dx < 0 ? -1 : 1;
+      if (Math.abs(dx) < 180 && Math.abs(dy) < 40 && --e.cd <= 0) { e.st = 1; e.cd = 38; sfx(70, 0.5, 'sawtooth', 120, 0.07); }
+    } else if (e.st === 1) {
+      if (--e.cd <= 0) { e.st = 2; e.cd = 150; }
+    } else if (e.st === 2) {
+      e.x += e.dir * 3.4;
+      if (frame % 4 === 0) burst(e.x + (e.dir < 0 ? 18 : 4), e.y + 20, '#cfeeff', 2);
+      if (e.x <= e.x0 || e.x >= e.x1) { e.x = clamp(e.x, e.x0, e.x1); e.st = 3; e.cd = 90; shake = Math.max(shake, 5); sfx(60, 0.3, 'sawtooth', -20, 0.08); }
+      else if (--e.cd <= 0) { e.st = 3; e.cd = 90; }
+    } else if (--e.cd <= 0) { e.st = 0; e.cd = 40; }
+    if (ov(P, e, 3)) { if (P.inv <= 0 && e.st === 2) P.vx = e.dir * 4; hurt(1, 'bar'); }
+  },
+  // Sam Altman: два токена по игроку и телепорт по платформе
+  alt(e, dx, dy) {
+    e.face = dx < 0 ? -1 : 1;
+    if (Math.abs(dx) < 200 && Math.abs(dy) < 120) {
+      e.cd--;
+      if (e.cd === 90 || e.cd === 74) {
+        const d = Math.hypot(dx, dy) || 1;
+        shots.push({ k: 'tok', x: e.x + 4, y: e.y + 4, vx: dx / d * 2.2, vy: dy / d * 2.2, w: 6, h: 6 });
+        sfx(900, 0.06, 'square', 300, 0.03);
+      }
+      if (e.cd <= 0) {
+        burst(e.x + 7, e.y + 9, '#4aa3ff', 8);
+        let nx; do { nx = e.x0 + Math.random() * (e.x1 - e.x0); } while (Math.abs(nx - e.x) < 40 && e.x1 - e.x0 > 90);
+        e.x = nx; e.cd = 150; burst(e.x + 7, e.y + 9, '#ffffff', 8); sfx(1200, 0.12, 'triangle', -700, 0.04);
+      }
+    }
+    if (ov(P, e, 3)) hurt(1, 'alt');
+  },
+  // Опасный Почик: сидит на пеньке и раздаёт «цезарей» волной
+  poc(e, dx, dy) {
+    e.face = dx < 0 ? -1 : 1; if (e.anim) e.anim--;
+    if (Math.abs(dx) < 170 && Math.abs(dy) < 70 && --e.cd <= 0) {
+      const dir = e.face;
+      shots.push({ k: 'cash', x: e.x + (dir > 0 ? 14 : -8), y: e.y + 6, y0: e.y + 6, vx: dir * 1.5, vy: 0, w: 12, h: 6, t: 0 });
+      L.pops.push({ x: e.x - 14, y: e.y - 20, s: 'ЦЕЗАРЬ!', t: 45 });
+      e.cd = 110; e.anim = 12; sfx(260, 0.1, 'triangle', 120, 0.04);
+    }
+    if (ov(P, e, 3)) hurt(1, 'poc');
+  },
+  // Телефонные мошенники: медленно преследуют, если подойти близко
+  tel(e) {
+    const cx = e.x + e.w / 2, cy = e.y + e.h / 2, pdx = P.x + P.w / 2 - cx, pdy = P.y + P.h / 2 - cy, d = Math.hypot(pdx, pdy) || 1;
+    if (d < 140) {
+      if (!e.ag) { e.ag = 1; L.pops.push({ x: e.x - 10, y: e.y - 12, s: SCAM_LINES[Math.floor(Math.random() * SCAM_LINES.length)], t: 55 }); }
+      e.x += pdx / d * 0.85; e.y += pdy / d * 0.85;
+      if (L.t % 24 === 0) sfx(1100 + Math.random() * 200, 0.05, 'square', 0, 0.02);
+    } else {
+      e.ag = 0;
+      const hx = e.hx - e.x, hy = e.hy - e.y, h = Math.hypot(hx, hy);
+      if (h > 2) { e.x += hx / h * 0.5; e.y += hy / h * 0.5; }
+    }
+    e.y += Math.sin(L.t * 0.08 + e.ph) * 0.3;
+    if (ov(P, e, 2)) hurt(1, 'tel');
+  },
+  // Fail2ban: молоток следует за игроком, фиксируется и бьёт сверху
+  ban(e) {
+    const px = P.x + P.w / 2, hit = () => ov(P, { x: e.hx, y: e.hy, w: 24, h: 12 }, 1);
+    if (e.st === 0) {
+      e.hy += (e.gy - 90 - e.hy) * 0.1;
+      if (Math.abs(px - (e.x + e.w / 2)) < e.w / 2 + 50 && Math.abs(P.y - e.gy) < 100 && --e.cd <= 0) { e.st = 1; e.bt = 70; }
+    } else if (e.st === 1) {
+      e.hx = clamp(e.hx + clamp(px - 12 - e.hx, -1.6, 1.6), e.x, e.x + e.w - 24);
+      if (--e.bt <= 0) { e.st = 2; e.bt = 24; sfx(700, 0.3, 'square', 0, 0.04); }
+    } else if (e.st === 2) {
+      if (--e.bt <= 0) { e.st = 3; e.vy = 2; }
+    } else if (e.st === 3) {
+      e.vy = Math.min(10, e.vy + 1); e.hy += e.vy;
+      if (e.hy + 12 >= e.gy) { e.hy = e.gy - 12; e.st = 4; e.bt = 26; shake = Math.max(shake, 7); sfx(60, 0.3, 'sawtooth', -20, 0.09); burst(e.hx + 12, e.gy, '#ff7a6a', 8); }
+      if (hit()) hurt(1, 'ban');
+    } else if (e.st === 4) {
+      if (hit()) hurt(1, 'ban');
+      if (--e.bt <= 0) e.st = 5;
+    } else {
+      e.hy -= 2.5;
+      if (e.hy <= e.gy - 80) { e.st = 0; e.cd = 60; }
+    }
+  },
+  // Anonymous: легион из трёх, прыгает в такт
+  ano(e, dx, dy) {
+    const ag = Math.abs(dx) < 110 && Math.abs(dy) < 50;
+    if (ag && Math.abs(dx) > 8) e.dir = dx < 0 ? -1 : 1;
+    e.x += e.dir * (ag ? 1.25 : 0.7);
+    if (e.x < e.x0) { e.x = e.x0; e.dir = 1; }
+    if (e.x > e.x1) { e.x = e.x1; e.dir = -1; }
+    if (e.oy <= 0 && e.hv <= 0 && --e.cd <= 0) { e.hv = 3.6; e.oy = 0.01; e.cd = 70; sfx(220, 0.08, 'square', 80, 0.03); }
+    if (e.oy > 0) { e.oy += e.hv; e.hv -= 0.3; if (e.oy <= 0) { e.oy = 0; e.hv = 0; } }
+    e.y = e.gy - e.h - e.oy;
+    if (ov(P, e, 3)) hurt(1, 'ano');
+  },
+  // Навальный и В. В. Путин: расходятся и сходятся по платформе, как два маятника
+  duo(e) {
+    e.ph += 0.021;
+    const span = e.w - 12;
+    e.ax = e.x + span * (0.5 + 0.5 * Math.sin(e.ph));
+    e.bx = e.x + span * (0.5 - 0.5 * Math.sin(e.ph));
+    const y = e.gy - 18;
+    if (ov(P, { x: e.ax, y, w: 12, h: 18 }, 3) || ov(P, { x: e.bx, y, w: 12, h: 18 }, 3)) hurt(1, 'duo');
+  },
+};
+
 // ---------- игровая сцена
 const playScene = {
   update() {
@@ -353,7 +604,7 @@ const playScene = {
     if (scene !== playScene) return;
     // падение
     if (P.y > H * T + 24) {
-      if (L.secret && P.x + P.w > L.secret.x0 && P.x < L.secret.x1) { sfx(200, 0.6, 'triangle', 600); gotoLevel(11); return; }
+      if (L.secret && P.x + P.w > L.secret.x0 && P.x < L.secret.x1) { sfx(200, 0.6, 'triangle', 600); gotoLevel(SALT); return; }
       P.hp--; shake = 6;
       if (P.hp <= 0) { die('fall'); return; }
       sfx(180, 0.2, 'sawtooth', -100, 0.07);
@@ -381,12 +632,14 @@ const playScene = {
         if (e.x < e.x0) { e.x = e.x0; if (!ag) e.dir = 1; }
         if (e.x > e.x1) { e.x = e.x1; if (!ag) e.dir = -1; }
         if (P.inv <= 0 && ov(P, e, 3)) { P.hp = 0; die('dynex'); return; }
+      } else if (ENEMY[e.t]) {
+        ENEMY[e.t](e, dx, dy);
       } else if (e.t === 'f') {
         if (ov(P, e)) { e.dead = true; onFlash(e); }
       } else if (e.t === 'm') {
         if (Math.abs(dx) < 60 && Math.abs(dy) < 48) L.say = e.say;
       } else if (e.t === 'g') {
-        if (ov(P, e, 2)) { sfx(500, 0.4, 'triangle', 900); gotoLevel(L.n + 1); return; }
+        if (ov(P, e, 2)) { sfx(500, 0.4, 'triangle', 900); advance(L.n + 1); return; }
       }
       if (scene !== playScene) return;
     }
@@ -401,9 +654,10 @@ const playScene = {
         return true;
       }
       s.vy += s.g || 0; s.x += s.vx; s.y += s.vy; s.rot = (s.rot || 0) + 0.25;
+      if (s.k === 'cash') s.y = s.y0 + Math.sin(++s.t * 0.1) * 16; // купюра летит волной
       const ground = s.k === 'wave' || s.k === 'sweep';
       if (!ground && tileAt(s.x + s.w / 2, s.y + s.h / 2)) {
-        burst(s.x, s.y, s.k === 'b' ? '#c05f10' : s.k === 'crystal' ? '#f7f1fa' : '#ff4fd8', 5);
+        burst(s.x, s.y, { b: '#c05f10', crystal: '#f7f1fa', fire: '#ff8a2a', tok: '#4aa3ff', cash: '#8ee0a8' }[s.k] || '#ff4fd8', 5);
         if (s.k === 'b') sfx(1200, 0.05, 'square', -600, 0.03);
         return false;
       }
@@ -458,11 +712,43 @@ const playScene = {
       else if (e.t === 'd') {
         spr(IMG.dynex, e.x, e.y + (Math.floor(frame / (e.ag ? 4 : 8)) % 2), e.dir < 0);
         if (e.ag) text('!', e.x + 8, e.y - 11, '#ff3b3b', 8, 'center');
+      } else if (e.t === 'fat') spr(IMG.fat, e.x, e.y - (e.anim ? 1 : 0), false);
+      else if (e.t === 'ari') {
+        spr(IMG.ari, e.x + (e.st === 1 ? (frame % 4 < 2 ? -1 : 1) : 0), e.y + (e.st === 1 ? 4 : 0), false);
+        if (e.st === 1) text('!', e.x + 8, e.y - 11, '#ff3b3b', 8, 'center');
+      } else if (e.t === 'bar') {
+        spr(IMG.bar, e.x + (e.st === 1 ? (frame % 4 < 2 ? -1 : 1) : 0), e.y + (e.st === 1 ? 2 : 0), e.dir > 0);
+        if (e.st === 1) text('!', e.x + 11, e.y - 11, '#ff3b3b', 8, 'center');
+      } else if (e.t === 'alt') spr(IMG.alt, e.x, e.y, e.face < 0);
+      else if (e.t === 'poc') spr(IMG.poc, e.x, e.y - (e.anim ? 1 : 0), e.face < 0);
+      else if (e.t === 'tel') {
+        spr(IMG.tel, e.x, e.y, false);
+        if (e.ag && frame % 16 < 8) { ctx.fillStyle = '#ffd23e'; for (const o of [-1, 1]) { ctx.fillRect(e.x + 5 + o * 9, e.y + 2, 1, 3); ctx.fillRect(e.x + 5 + o * 12, e.y + 4, 1, 3); ctx.fillRect(e.x + 5 + o * 9, e.y + 7, 1, 3); } }
+      } else if (e.t === 'ban') {
+        if (e.st === 1 || e.st === 2) { ctx.fillStyle = e.st === 2 && frame % 6 < 3 ? '#ff3b3bcc' : '#ff3b3b44'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy) + 12, 24, e.gy - e.hy - 12); }
+        ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(e.hx) + 9, -20, 6, Math.round(e.hy) + 20);
+        ctx.fillStyle = '#8a5a2c'; ctx.fillRect(Math.round(e.hx) + 10, -20, 4, Math.round(e.hy) + 20);
+        ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(e.hx) - 1, Math.round(e.hy) - 1, 26, 14);
+        ctx.fillStyle = '#e03030'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy), 24, 12);
+        ctx.fillStyle = '#ff8a7a'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy), 24, 2);
+        text('BAN', Math.round(e.hx) + 12, Math.round(e.hy) + 3, '#fff', 6, 'center');
+      } else if (e.t === 'ano') {
+        for (let i = 0; i < 3; i++) spr(IMG.ano, e.x + i * 14, e.y, false);
+      } else if (e.t === 'duo') {
+        spr(IMG.navy, e.ax, e.gy - 18, false); spr(IMG.putin, e.bx, e.gy - 18, false);
       } else if (e.t === 'f') spr(IMG.flash, e.x, e.y + Math.sin(frame * 0.1) * 2);
       else if (e.t === 'm') spr(IMG.melvi, e.x, e.y, P.x < e.x);
       else if (e.t === 'g') {
         for (let i = 0; i < 4; i++) { ctx.fillStyle = ['#7a3cff', '#19ff9c', '#ff4fd8', '#ffffff'][(i + Math.floor(frame / 6)) % 4]; ctx.fillRect(e.x + i * 2, e.y + i * 3, 16 - i * 4, 26 - i * 6); }
       }
+    }
+    // имена особых врагов, когда игрок рядом
+    for (const e of L.ents) {
+      if (e.dead || !(e.name || e.t === 'duo')) continue;
+      if (Math.abs(P.x - (e.x + e.w / 2)) > 120 || Math.abs(P.y - (e.y + e.h / 2)) > 110) continue;
+      if (e.t === 'duo') { text('Navalny', e.ax + 6, e.gy - 27, '#ffe27a', 6, 'center'); text('V. V. Putin', e.bx + 6, e.gy - 36, '#ffe27a', 6, 'center'); }
+      else if (e.t === 'ban') text(e.name, e.hx + 12, e.hy - 9, '#ffe27a', 6, 'center');
+      else text(e.name, e.x + e.w / 2, e.y - (e.t === 'bar' ? 22 : 9), '#ffe27a', 6, 'center');
     }
     // босс
     const b = L.boss;
@@ -482,6 +768,9 @@ const playScene = {
     for (const s of shots) {
       if (s.k === 'b') { ctx.save(); ctx.translate(Math.round(s.x + 2), Math.round(s.y + 5)); ctx.rotate(s.rot); ctx.drawImage(IMG.bottle, -2, -5); ctx.restore(); }
       else if (s.k === 'usb') spr(IMG.flash, s.x, s.y);
+      else if (s.k === 'fire') { ctx.fillStyle = '#e03020'; ctx.fillRect(s.x, s.y + 1, 7, 5); ctx.fillRect(s.x + 1, s.y, 5, 7); ctx.fillStyle = frame % 4 < 2 ? '#ffd23e' : '#ff8a2a'; ctx.fillRect(s.x + 2, s.y + 2, 3, 3); }
+      else if (s.k === 'tok') { ctx.fillStyle = '#17161c'; ctx.fillRect(s.x - 1, s.y - 1, 8, 8); ctx.fillStyle = '#4aa3ff'; ctx.fillRect(s.x, s.y, 6, 6); ctx.fillStyle = '#fff'; ctx.fillRect(s.x + 1, s.y + 1, 2, 2); ctx.fillRect(s.x + 4, s.y + 4, 1, 1); }
+      else if (s.k === 'cash') spr(IMG.cash, s.x, s.y, s.vx < 0);
       else if (s.k === 'glitch') { ctx.fillStyle = frame % 4 < 2 ? '#ff4fd8' : '#19ff9c'; ctx.fillRect(s.x, s.y, 6, 6); ctx.fillStyle = '#fff'; ctx.fillRect(s.x + 2, s.y + 2, 2, 2); }
       else if (s.k === 'sweep') { ctx.fillStyle = '#ff4fd8'; ctx.fillRect(s.x, s.y, 10, 10); ctx.fillStyle = '#19ff9c'; ctx.fillRect(s.x + 2, s.y + (frame % 6), 6, 2); }
       else if (s.k === 'wave') { ctx.fillStyle = '#f7f1fa'; ctx.fillRect(s.x, s.y + 3, 10, 6); ctx.fillRect(s.x + 3, s.y, 4, 3); }
@@ -502,7 +791,7 @@ const playScene = {
     } else text(`УР.${L.n} ${Z.name}`, 314, 6, '#fff', 6, 'right');
     if (L.say) {
       box(8, 22, 304, 44, '#17161cee', '#fff');
-      text('melvi:', 13, 26, '#19ff9c', 6);
+      text(MELVI + ':', 13, 26, '#19ff9c', 6);
       wrap(L.say, 292, 6).slice(0, 4).forEach((l, i) => text(l, 13, 35 + i * 8, '#fff', 6));
     } else if (L.banner) text(L.banner[0], 160, 34, '#fff', 8, 'center');
   },
@@ -535,13 +824,111 @@ function drawBG(z, cam) {
     for (let x = -(frame / 2 % 16); x < VW; x += 16) ctx.fillRect(x, 0, 1, VH);
     for (let y = (frame / 2 % 16); y < VH; y += 16) ctx.fillRect(0, y, VW, 1);
     for (let i = 0; i < 6; i++) { const s = Math.floor(frame / 7) + i * 17; ctx.fillStyle = i % 2 ? '#ff4fd833' : '#19ff9c33'; ctx.fillRect(hash(s, 1) * VW, hash(s, 2) * VH, 10 + hash(s, 3) * 50, 2 + hash(s, 4) * 5); }
-  } else {
+  } else if (z === 4) {
     for (let i = 0; i < 16; i++) {
       const h = 10 + hash(i, 5) * 30; ctx.fillStyle = '#3a3248';
       for (let k = 0; k < 5; k++) ctx.fillRect(i * 20 + k * 2, 0, 20 - k * 4, h * (k + 1) / 5);
       ctx.fillStyle = i % 3 ? '#4d4460' : '#ffb8d866'; const ch = 14 + hash(i, 9) * 30;
       ctx.fillRect(i * 22 + 4, 148 - ch, 6, ch + 32); ctx.fillRect(i * 22 + 6, 146 - ch, 2, 2);
     }
+  } else if (z === 5) bgSynagogue(cam);
+  else if (z === 6) bgServers(cam);
+  else bgBackstage(cam);
+}
+
+// витражное окно с аркой: окно собрано из цветных ячеек 4×4
+function archWindow(x, y, w, h, seed) {
+  const pal = ['#4aa3ff', '#ffd23e', '#e03030', '#2ecc71', '#b06cff'], hw = w / 2;
+  for (let cy = 0; cy < h; cy += 4) for (let cx = 0; cx < w; cx += 4) {
+    const dy = cy + 2, dx = cx + 2 - hw;
+    if (dy < hw && dx * dx + (dy - hw) * (dy - hw) > hw * hw) continue; // срезаем верх аркой
+    ctx.fillStyle = pal[Math.floor(hash(cx + seed, cy) * pal.length)]; ctx.fillRect(x + cx, y + cy, 3, 3);
+    ctx.fillStyle = '#17101f'; ctx.fillRect(x + cx + 3, y + cy, 1, 4); ctx.fillRect(x + cx, y + cy + 3, 4, 1);
+  }
+}
+function menorah(x, y) {
+  ctx.fillStyle = '#d4a017';
+  ctx.fillRect(x - 7, y - 3, 14, 3); ctx.fillRect(x - 1, y - 20, 2, 17); ctx.fillRect(x - 13, y - 6, 26, 2);
+  for (const o of [-12, -8, -4, 4, 8, 12]) ctx.fillRect(x + o - 1, y - 17, 2, 11);
+  for (const o of [-12, -8, -4, 0, 4, 8, 12]) {
+    ctx.fillStyle = hash(o + Math.floor(frame / 7), x) > 0.5 ? '#ffd23e' : '#ff9a2e';
+    ctx.fillRect(x + o - 1, y - 24 + (o === 0 ? -3 : 0), 2, 4);
+  }
+}
+function bgSynagogue(cam) {
+  ctx.fillStyle = '#ffd88a14'; ctx.fillRect(0, 0, VW, VH);
+  const wo = cam * 0.3;
+  for (let i = Math.floor(wo / 80) - 1; i < Math.floor(wo / 80) + 6; i++) {
+    const x = Math.round(i * 80 - wo + 24);
+    ctx.fillStyle = '#ffd88a18'; ctx.fillRect(x - 4, 14, 36, 100);
+    archWindow(x, 18, 28, 76, i * 7);
+    if (i % 2 === 0) { ctx.fillStyle = '#6b5038'; ctx.fillRect(x - 2, 96, 32, 4); menorah(x + 14, 96); }
+  }
+  // колонны ближнего плана
+  const po = cam * 0.6;
+  for (let i = Math.floor(po / 112) - 1; i < Math.floor(po / 112) + 4; i++) {
+    const x = Math.round(i * 112 - po + 8);
+    ctx.fillStyle = '#b9a67c'; ctx.fillRect(x, 0, 14, VH);
+    ctx.fillStyle = '#d8c8a0'; ctx.fillRect(x + 2, 0, 4, VH);
+    ctx.fillStyle = '#8a7a58'; ctx.fillRect(x + 10, 0, 4, VH);
+    ctx.fillStyle = '#d8c8a0'; ctx.fillRect(x - 3, 0, 20, 6); ctx.fillRect(x - 3, 150, 20, 8);
+  }
+  // висячие лампы
+  for (let i = 0; i < 4; i++) {
+    const x = ((i * 100 - cam * 0.45) % 440 + 440) % 440 - 60, sw = Math.sin(frame * 0.03 + i) * 2;
+    ctx.fillStyle = '#6b5038'; ctx.fillRect(x + 6, 0, 1, 20);
+    ctx.fillStyle = '#ffd23e'; ctx.fillRect(x + sw, 20, 13, 6); ctx.fillStyle = '#fff3b0'; ctx.fillRect(x + 3 + sw, 22, 7, 3);
+  }
+}
+function bgServers(cam) {
+  // огромная лямбда на стене
+  ctx.strokeStyle = 'rgba(240,138,28,0.10)'; ctx.lineWidth = 14; ctx.lineCap = 'butt';
+  ctx.beginPath(); ctx.moveTo(130, 24); ctx.lineTo(206, 150); ctx.moveTo(171, 88); ctx.lineTo(120, 150); ctx.stroke();
+  const rack = (off, bw, bh, base, body, led) => {
+    const i0 = Math.floor(off / (bw + 4));
+    for (let i = i0; i < i0 + VW / (bw + 4) + 2; i++) {
+      const h = bh + Math.floor(hash(i, bw) * 30), x = Math.round(i * (bw + 4) - off), y = base - h;
+      ctx.fillStyle = body; ctx.fillRect(x, y, bw, VH - y);
+      ctx.fillStyle = '#00000055'; for (let vy = y + 6; vy < base - 4; vy += 8) ctx.fillRect(x + 3, vy, bw - 6, 2);
+      for (let vy = y + 5; vy < base - 4; vy += 8) {
+        const on = hash(i * 13 + vy, Math.floor(frame / (24 + (i % 3) * 8))) > 0.35;
+        ctx.fillStyle = on ? (hash(i, vy) > 0.5 ? '#19ff9c' : '#ff8a1c') : '#2a3140'; ctx.fillRect(x + bw - 7, vy, 3, 2);
+      }
+    }
+  };
+  rack(cam * 0.2, 26, 50, 150, '#10151e');
+  rack(cam * 0.45, 34, 60, 172, '#171d2a');
+  // провисшие кабели
+  ctx.strokeStyle = '#05070b'; ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) {
+    const x0 = ((i * 170 - cam * 0.35) % 520 + 520) % 520 - 100;
+    ctx.beginPath(); ctx.moveTo(x0, 0); ctx.quadraticCurveTo(x0 + 80, 40 + i * 6, x0 + 170, 0); ctx.stroke();
+  }
+}
+function bgBackstage(cam) {
+  // задники декораций: видна изнанка — фанера, брусья, раскосы
+  const flats = (off, bw, minH, varH, base, ply, line) => {
+    const i0 = Math.floor(off / (bw + 6));
+    for (let i = i0; i < i0 + VW / (bw + 6) + 2; i++) {
+      const h = Math.floor(minH + hash(i, bw) * varH), x = Math.round(i * (bw + 6) - off), y = base - h;
+      ctx.fillStyle = ply; ctx.fillRect(x, y, bw, VH - y);
+      ctx.fillStyle = line; ctx.fillRect(x, y, 3, VH - y); ctx.fillRect(x + bw - 3, y, 3, VH - y); ctx.fillRect(x, y, bw, 3);
+      for (let k = 0; k < bw; k++) { ctx.fillRect(x + k, y + 3 + Math.floor(k * (h - 6) / bw / 2), 1, 2); ctx.fillRect(x + bw - 1 - k, y + 3 + Math.floor(k * (h - 6) / bw / 2), 1, 2); }
+    }
+  };
+  flats(cam * 0.2, 46, 40, 40, 150, '#4a3626', '#32231a');
+  flats(cam * 0.45, 38, 30, 36, 168, '#654a34', '#3f2d20');
+  // световая ферма с прожекторами
+  ctx.fillStyle = '#0b0807'; ctx.fillRect(0, 0, VW, 8);
+  for (let i = 0; i < 4; i++) {
+    const lx = ((i * 96 - cam * 0.3) % 400 + 400) % 400 - 40, sway = Math.sin(frame * 0.02 + i * 1.7) * 26;
+    ctx.fillStyle = '#17161c'; ctx.fillRect(lx - 4, 6, 8, 5);
+    ctx.fillStyle = 'rgba(255,232,160,0.08)'; ctx.beginPath(); ctx.moveTo(lx - 2, 10); ctx.lineTo(lx + 2, 10); ctx.lineTo(lx + sway + 34, 160); ctx.lineTo(lx + sway - 34, 160); ctx.closePath(); ctx.fill();
+  }
+  // верёвки с мешками-противовесами
+  for (let i = 0; i < 3; i++) {
+    const x = ((i * 140 - cam * 0.5) % 460 + 460) % 460 - 40;
+    ctx.fillStyle = '#9a8a6a'; ctx.fillRect(x, 8, 1, 60 + (i % 2) * 20); ctx.fillStyle = '#6b5a3c'; ctx.fillRect(x - 5, 68 + (i % 2) * 20, 11, 10);
   }
 }
 
@@ -706,11 +1093,278 @@ function crystalScene() {
   };
 }
 
+// ---------- мини-игра: заплыв (между 3 и 4 уровнями)
+function drawBoat(x, y, dir, alert) {
+  ctx.save(); ctx.translate(Math.round(x + 20), y); ctx.scale(dir > 0 ? 1 : -1, 1);
+  const r = (a, b, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(a, b, w, h); };
+  r(-21, -9, 42, 12, '#17161c'); r(-20, -8, 40, 8, '#e8edf5'); r(-20, -3, 40, 3, '#2b5ea8'); r(16, -9, 5, 5, '#e8edf5');
+  r(-8, -18, 16, 10, '#17161c'); r(-7, -17, 14, 9, '#e8edf5'); r(-5, -15, 10, 4, '#4aa3ff');
+  r(0, -26, 2, 8, '#17161c'); r(-2, -29, 6, 3, frame % 20 < 10 ? '#e03030' : '#4aa3ff');
+  r(-17, -6, 6, 1, '#17161c');
+  ctx.restore();
+  if (alert) text('!', x + 20, y - 40, '#ff3b3b', 8, 'center');
+}
+function swimScene(done) {
+  const WW = 2800, SURF = 44, FLOOR = 166, R = rng(777);
+  const mines = [], boats = [], charges = [], blasts = [], fx = [];
+  for (let x = 240; x < WW - 200; x += 100 + R() * 45) {
+    const two = R() < 0.45, y1 = 60 + R() * (two ? 36 : 88);
+    mines.push({ x, y0: y1, ph: R() * 6, ax: R() < 0.35 ? 20 : 0 });
+    if (two) mines.push({ x: x + R() * 16 - 8, y0: y1 + 64 + R() * 16, ph: R() * 6, ax: R() < 0.35 ? 20 : 0 });
+  }
+  for (const bx of [520, 980, 1440, 1900, 2360]) boats.push({ x0: bx - 140, x1: bx + 140, x: bx, dir: 1, cd: 70, near: false });
+  const S = { x: 24, y: 100, vx: 0, vy: 0, hp: 3, inv: 0, face: 1 };
+  let st = 0, t = 0, et = 0, shk = 0, why = '';
+  const mpos = m => [m.x + Math.sin(t * 0.03 + m.ph) * m.ax, m.y0 + Math.sin(t * 0.05 + m.ph) * 8];
+  const boom = (x, y, n) => { for (let i = 0; i < n; i++) fx.push({ x, y, vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3, life: 18 + Math.random() * 14, col: ['#ffd23e', '#ff8a2a', '#fff'][i % 3] }); };
+  const hit = reason => {
+    if (S.inv > 0 || st) return;
+    S.hp--; S.inv = 90; shk = 8; why = reason; sfx(120, 0.4, 'sawtooth', -60, 0.08);
+    if (S.hp <= 0) { st = 2; et = 0; }
+  };
+  return {
+    pad: 'swim',
+    dbg: () => ({ S, mines, boats, charges, blasts, t, mpos, WW, st }), // для автотестов
+    update() {
+      t++; if (shk) shk--;
+      for (const p of fx) { p.x += p.vx; p.y += p.vy; p.life--; }
+      for (let i = fx.length; i--;) if (fx[i].life <= 0) fx.splice(i, 1);
+      if (st === 1) { if (++et > 110) done(); return; }
+      if (st === 2) { et++; if (et > 60 && anyPressed) scene = swimScene(done); return; }
+      const ax = keys.right - keys.left, ay = keys.down - keys.jump;
+      S.vx += (ax * 1.7 - S.vx) * 0.12; S.vy += (ay * 1.7 - S.vy) * 0.12;
+      if (ax) S.face = ax;
+      S.x = clamp(S.x + S.vx, 6, WW - 20); S.y = clamp(S.y + S.vy, SURF + 8, FLOOR - 8);
+      if (S.inv > 0) S.inv--;
+      if (t % 14 === 0) fx.push({ x: S.x + 6 + S.face * 6, y: S.y + 2, vx: 0, vy: -0.6, life: 30, col: '#cfeaff' });
+      const cx = S.x + 6, cy = S.y + 4.5;
+      for (const m of mines) {
+        if (m.dead) continue;
+        const [mx, my] = mpos(m);
+        if (Math.hypot(cx - mx, cy - my) < 11) { m.dead = true; boom(mx, my, 16); blasts.push({ x: mx, y: my, t: 0 }); sfx(90, 0.5, 'sawtooth', -40, 0.09); hit('ХОЛОС ПОДОРВАЛСЯ НА МИНЕ'); }
+      }
+      for (const b of boats) {
+        b.x += b.dir * 0.45; if (b.x < b.x0) b.dir = 1; if (b.x > b.x1) b.dir = -1;
+        b.near = Math.abs(cx - (b.x + 20)) < 95;
+        if (b.near && --b.cd <= 0) { b.cd = 80; charges.push({ x: b.x + 20, y: SURF + 6, ty: clamp(cy + (Math.random() - 0.5) * 36, 66, 150) }); sfx(300, 0.1, 'triangle', -150, 0.04); }
+      }
+      for (const c of charges) {
+        c.y += 1.3;
+        if (c.y >= c.ty) { c.dead = true; blasts.push({ x: c.x, y: c.y, t: 0 }); boom(c.x, c.y, 18); sfx(80, 0.5, 'sawtooth', -30, 0.09); shk = 6; }
+      }
+      for (const bl of blasts) { bl.t++; if (bl.t < 14 && Math.hypot(cx - bl.x, cy - bl.y) < 8 + bl.t * 1.4) hit('БЕРЕГОВАЯ ОХРАНА ПОПАЛА БОМБОЙ'); }
+      for (let i = charges.length; i--;) if (charges[i].dead) charges.splice(i, 1);
+      for (let i = blasts.length; i--;) if (blasts[i].t > 22) blasts.splice(i, 1);
+      if (S.x >= WW - 60) { st = 1; et = 0; sfx(600, 0.5, 'triangle', 600, 0.07); }
+    },
+    draw() {
+      const cam = Math.round(clamp(S.x - 110, 0, WW - VW)), sx = shk ? Math.round((Math.random() - 0.5) * shk) : 0;
+      // небо и далёкие берега
+      const sky = ctx.createLinearGradient(0, 0, 0, SURF); sky.addColorStop(0, '#7cc6ee'); sky.addColorStop(1, '#d6efff');
+      ctx.fillStyle = sky; ctx.fillRect(0, 0, VW, SURF + 2);
+      ctx.fillStyle = '#fff'; for (let i = 0; i < 3; i++) ctx.fillRect(((i * 120 + t * 0.15 - cam * 0.1) % 380 + 380) % 380 - 30, 8 + i * 9, 26, 5);
+      if (cam < 400) skyline(cam * 0.3, '#8fb3cc', null, 26, 14, 18, 1, SURF);
+      if (cam > WW - 700) { ctx.fillStyle = '#d9bf86'; for (let x = 0; x < VW; x += 8) { const h = 4 + hash(x / 8, 3) * 9; ctx.fillRect(x, SURF - h * clamp((cam - (WW - 700)) / 300, 0, 1), 8, h); } }
+      ctx.fillStyle = '#d6efff'; ctx.fillRect(0, SURF, VW, 4);
+      // море
+      const sea = ctx.createLinearGradient(0, SURF, 0, VH); sea.addColorStop(0, '#3a9fe0'); sea.addColorStop(1, '#08224a');
+      ctx.fillStyle = sea; ctx.fillRect(0, SURF + 2, VW, VH);
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      for (let i = 0; i < 5; i++) { const x = ((i * 84 + t * 0.25 - cam * 0.5) % 420 + 420) % 420 - 50; ctx.beginPath(); ctx.moveTo(x, SURF + 2); ctx.lineTo(x + 18, SURF + 2); ctx.lineTo(x + 70, VH); ctx.lineTo(x + 6, VH); ctx.fill(); }
+      ctx.fillStyle = '#ffffff55'; for (let i = 0; i < 12; i++) ctx.fillRect(((i * 41 - cam + t * 0.5) % 340 + 340) % 340 - 10, SURF + 2 + (i % 3), 8, 1);
+      ctx.save(); ctx.translate(-cam + sx, 0);
+      // дно
+      ctx.fillStyle = '#5a4a32'; ctx.fillRect(cam, FLOOR + 8, VW, VH);
+      for (let x = Math.floor(cam / 20) * 20; x < cam + VW + 20; x += 20) {
+        const h = 2 + hash(x / 20, 9) * 6; ctx.fillStyle = '#4a3c28'; ctx.fillRect(x, FLOOR + 8 - h, 12, h);
+        if (hash(x / 20, 4) > 0.6) { ctx.fillStyle = '#2f8f4a'; ctx.fillRect(x + 4, FLOOR - 4 - hash(x, 2) * 8 + Math.sin(t * 0.05 + x) * 1, 2, 12); }
+      }
+      // причал в Одессе и пляж на другом берегу
+      ctx.fillStyle = '#8b8b95'; ctx.fillRect(-20, SURF - 10, 46, VH); ctx.fillStyle = '#6b6b75'; ctx.fillRect(24, SURF - 10, 3, VH);
+      ctx.fillStyle = '#e8cf94'; ctx.beginPath(); ctx.moveTo(WW - 190, FLOOR + 8); ctx.lineTo(WW - 30, SURF + 4); ctx.lineTo(WW + 60, SURF + 4); ctx.lineTo(WW + 60, VH); ctx.lineTo(WW - 190, VH); ctx.fill();
+      ctx.fillStyle = '#d9bf86'; ctx.fillRect(WW - 40, SURF - 10, 120, 14);
+      // мины
+      for (const m of mines) {
+        if (m.dead || Math.abs(m.x - cam - 160) > 220) continue;
+        const [mx, my] = mpos(m);
+        spr(IMG.mine, mx - 6.5, my - 6.5);
+        ctx.fillStyle = frame % 40 < 20 ? '#ff3b3b' : '#6b1010'; ctx.fillRect(Math.round(mx) - 1, Math.round(my) - 1, 2, 2);
+      }
+      // глубинные бомбы и взрывы
+      for (const c of charges) {
+        ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(c.x) - 3, Math.round(c.y) - 4, 7, 9);
+        ctx.fillStyle = (c.ty - c.y < 24 && frame % 6 < 3) ? '#ff3b3b' : '#6b6b75'; ctx.fillRect(Math.round(c.x) - 2, Math.round(c.y) - 3, 5, 7);
+      }
+      for (const bl of blasts) {
+        const r = 8 + bl.t * 1.4; ctx.fillStyle = `rgba(255,${200 - bl.t * 6},60,${Math.max(0, 0.7 - bl.t / 32)})`;
+        ctx.beginPath(); ctx.arc(bl.x, bl.y, r, 0, 7); ctx.fill();
+      }
+      for (const b of boats) drawBoat(b.x, SURF, b.dir, b.near);
+      // игрок
+      if (st !== 2 && S.inv % 6 < 3) {
+        ctx.save(); ctx.translate(Math.round(S.x + 6), Math.round(S.y + 4)); ctx.rotate(S.face > 0 ? Math.PI / 2 : -Math.PI / 2);
+        ctx.drawImage(IMG.holos, -7, -8 + (Math.abs(S.vx) > 0.4 ? Math.sin(t * 0.4) : 0)); ctx.restore();
+      }
+      for (const p of fx) { ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2); }
+      ctx.restore();
+      // интерфейс
+      for (let i = 0; i < 3; i++) spr(i < S.hp ? IMG.heart : IMG.heartOff, 6 + i * 13, 6, false, 2);
+      text('ДО БЕРЕГА', 314, 5, '#17161c', 6, 'right');
+      box(214, 14, 100, 5, '#2b2a33', '#000'); ctx.fillStyle = '#19ff9c'; ctx.fillRect(214, 14, 100 * clamp(S.x / (WW - 60), 0, 1), 5);
+      if (t < 200 && !st) text('ПЛЫВИ ВПРАВО. БЕРЕГОВАЯ ОХРАНА ДРОЖИТ.', 160, 28, '#17161c', 6, 'center');
+      if (st === 1) { ctx.fillStyle = '#00000088'; ctx.fillRect(0, 60, VW, 50); text('БЕРЕГ!', 160, 68, '#19ff9c', 16, 'center'); text('ПОХОЖЕ, ИЗРАИЛЬ...', 160, 92, '#fff', 8, 'center'); }
+      if (st === 2) {
+        ctx.fillStyle = '#000000b0'; ctx.fillRect(0, 50, VW, 70);
+        text(why, 160, 62, '#ff5a5a', 8, 'center'); text('ХОЛОС ИДЁТ КО ДНУ.', 160, 80, '#fff', 8, 'center');
+        if (et > 60 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА', 160, 100, '#9a9aa6', 6, 'center');
+      }
+    },
+  };
+}
+
+// ---------- мини-игра: поддельный паспорт (между 6 и 7 уровнями), как в Papers, Please
+function stampIcon(shape, c, x, y) {
+  ctx.fillStyle = c;
+  if (shape === 'circle') { ctx.beginPath(); ctx.arc(x + 5, y + 5, 5, 0, 7); ctx.fill(); }
+  else if (shape === 'square') ctx.fillRect(x + 1, y + 1, 8, 8);
+  else if (shape === 'diamond') for (let i = 0; i < 10; i++) { const w = 2 + 2 * Math.min(i, 9 - i); ctx.fillRect(x + 5 - w / 2, y + i, w, 1); }
+  else { ctx.fillRect(x + 4, y, 2, 10); ctx.fillRect(x, y + 4, 10, 2); for (let i = 0; i < 10; i++) { ctx.fillRect(x + i, y + i, 1, 1); ctx.fillRect(x + 9 - i, y + i, 1, 1); } }
+}
+function thumb(key, x, y, maxH) {
+  const img = IMG[key], k = Math.min(1, maxH / img.height);
+  ctx.drawImage(img, Math.round(x), Math.round(y), Math.round(img.width * k), Math.round(img.height * k));
+}
+function passportScene(done) {
+  const STAMPS = [['СИНЯЯ ЗВЕЗДА', '#2f6fe0', 'star'], ['КРАСНЫЙ КРУГ', '#e03030', 'circle'], ['ЗЕЛЁНЫЙ РОМБ', '#2ecc71', 'diamond'], ['ЖЁЛТЫЙ КВАДРАТ', '#ffd23e', 'square']];
+  const PHOTOS = [['ХОЛОС', 'holos'], ['ДЫНЕКС', 'dynex'], ['МРДРНОС', 'nos'], ['НИКИТА', 'yarosh']];
+  const R = rng((Math.random() * 1e9) | 0);
+  const pick = a => a[Math.floor(R() * a.length)];
+  const shuf = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const digits = k => [...Array(k)].map(() => Math.floor(R() * 10)).join('');
+  const d0 = 1 + Math.floor(R() * 9), bad0 = d0 % 9 + 1;
+  const stamp = pick(STAMPS), birth = 1970 + Math.floor(R() * 36), expiry = 2028 + Math.floor(R() * 8);
+  const row = (key, label, items, ok, kind, why, h = 14) => {
+    const opts = shuf(items), okIdx = opts.indexOf(ok); let cur;
+    do cur = Math.floor(R() * opts.length); while (cur === okIdx);
+    return { key, label, opts, ok: okIdx, cur, kind, why, h };
+  };
+  const rows = [
+    row('country', 'СТРАНА', ['ИЗРАИЛЬ', 'ГАЗА', 'ОДЕССА', 'МЕТА-МИР'], 'ИЗРАИЛЬ', 'text', 'СТРАНА НЕ ТА.'),
+    row('stamp', 'ПЕЧАТЬ', STAMPS, stamp, 'stamp', 'ПЕЧАТЬ НЕ ТА.'),
+    row('photo', 'ФОТО', PHOTOS, PHOTOS[0], 'photo', 'ЭТО НЕ ХОЛОС НА ФОТО.', 18),
+    row('num', 'НОМЕР', [d0 + digits(6), bad0 + digits(6), d0 + digits(5), d0 + digits(7)], null, 'text', 'НОМЕР НЕВЕРНЫЙ.'),
+    row('birth', 'РОДИЛСЯ', [String(birth), '2009', '2014', '2023'], String(birth), 'text', 'СЛИШКОМ МОЛОД.'),
+    row('exp', 'ДО', [String(expiry), '2015', '2025', '2044'], String(expiry), 'text', 'СРОК НЕ ТОТ.'),
+  ];
+  rows[3].ok = rows[3].opts.findIndex(o => o.length === 7 && o[0] === String(d0));
+  do rows[3].cur = Math.floor(R() * 4); while (rows[3].cur === rows[3].ok);
+  let ry = 31; for (const r of rows) { r.y = ry; ry += r.h + 2; }
+  const rules = [['СТРАНА: ИЗРАИЛЬ'], ['ПЕЧАТЬ: ' + stamp[0], () => 'stamp'], ['ФОТО: КАК У ХОЛОСА', () => 'photo'], ['НОМЕР: 7 ЦИФР, ПЕРВАЯ ' + d0], ['РОДИЛСЯ ДО 2008'], ['СРОК: 2027-2036']];
+  const TIME = 4800, BTN = { x: 246, y: 146, w: 68, h: 24 };
+  let t = 0, sel = 0, st = 0, et = 0, ok = false, msg = 'ДОКУМЕНТЫ.';
+  const val = r => r.opts[r.cur];
+  const submit = reason => {
+    if (st) return;
+    const bad = rows.find(r => r.cur !== r.ok);
+    ok = !reason && !bad; st = 1; et = 0;
+    msg = ok ? 'ОДАА!' : (reason || bad.why) + ' НЕТ.';
+  };
+  const change = (r, d) => { r.cur = (r.cur + d + r.opts.length) % r.opts.length; sfx(500 + r.cur * 40, 0.04, 'square', 0, 0.03); };
+  return {
+    pad: 'none',
+    rows, // для тестов
+    update() {
+      t++;
+      if (st === 1) {
+        et++;
+        if (et === 18) sfx(ok ? 700 : 110, 0.3, ok ? 'triangle' : 'sawtooth', ok ? 500 : -60, 0.09);
+        if (et > 120) { if (ok) done(); else scene = failScene(msg, () => { scene = passportScene(done); }); }
+        return;
+      }
+      if (t > TIME) { submit('ВРЕМЯ ВЫШЛО.'); return; }
+      if (codes.has('ArrowUp') || codes.has('KeyW')) sel = (sel + rows.length - 1) % rows.length;
+      if (codes.has('ArrowDown') || codes.has('KeyS')) sel = (sel + 1) % rows.length;
+      if (codes.has('ArrowLeft') || codes.has('KeyA')) change(rows[sel], -1);
+      if (codes.has('ArrowRight') || codes.has('KeyD')) change(rows[sel], 1);
+      if (codes.has('Enter') || codes.has('Space')) { submit(); return; }
+      if (click) {
+        if (inside(click, BTN)) { submit(); return; }
+        rows.forEach((r, i) => { if (inside(click, { x: 172, y: r.y, w: 138, h: r.h })) { sel = i; change(r, click.x < 241 ? -1 : 1); } });
+      }
+    },
+    draw() {
+      ctx.fillStyle = '#26222e'; ctx.fillRect(0, 0, VW, VH);
+      ctx.fillStyle = '#3a3248'; ctx.fillRect(0, 138, VW, 42);
+      text('ГРАНИЦА ИЗРАИЛЯ', 6, 4, '#19ff9c', 6);
+      text('ВРЕМЯ', 172, 4, '#9a9aa6', 6);
+      box(206, 4, 108, 6, '#2b2a33', '#000'); const left = clamp(1 - t / TIME, 0, 1); ctx.fillStyle = left > 0.3 ? '#19ff9c' : '#ff5a5a'; ctx.fillRect(206, 4, 108 * left, 6);
+      // правила
+      box(4, 16, 110, 120, '#f1ead2', '#17161c');
+      text('ПРАВИЛА ВЪЕЗДА', 59, 20, '#a02020', 6, 'center');
+      let y = 31;
+      for (const [s, ic] of rules) {
+        const lines = wrap(s, ic ? 84 : 100, 6);
+        lines.forEach((l, i) => text(l, 8, y + i * 8, '#17161c', 6));
+        if (ic) { if (ic() === 'stamp') stampIcon(stamp[2], stamp[1], 96, y + 2); else thumb('holos', 96, y, 16); }
+        y += Math.max(lines.length * 8, ic ? 16 : 0) + 4;
+      }
+      // паспорт
+      box(118, 16, 198, 120, '#f1ead2', '#2d4c8f');
+      ctx.fillStyle = '#2d4c8f'; ctx.fillRect(118, 16, 198, 12);
+      text('ПАСПОРТ ХОЛОСА', 217, 19, '#fff', 6, 'center');
+      rows.forEach((r, i) => {
+        text(r.label, 124, r.y + (r.h - 6) / 2, '#17161c', 6);
+        box(172, r.y, 138, r.h, i === sel ? '#fff7c2' : '#fff', i === sel ? '#e0a000' : '#17161c');
+        text('<', 176, r.y + (r.h - 6) / 2, '#2d4c8f', 6); text('>', 301, r.y + (r.h - 6) / 2, '#2d4c8f', 6);
+        const v = val(r);
+        if (r.kind === 'text') text(v, 241, r.y + 4, '#17161c', 6, 'center');
+        else if (r.kind === 'stamp') { stampIcon(v[2], v[1], 190, r.y + 2); text(v[0], 246, r.y + 4, '#17161c', 6, 'center'); }
+        else thumb(v[1], 233, r.y + 1, 16);
+      });
+      // мельви
+      spr(IMG.melvi, 10, 142, false, 2);
+      text(MELVI + ':', 48, 141, '#19ff9c', 6);
+      box(48, 150, 190, 22, '#fff', '#17161c');
+      const ls = wrap(msg, 180, 6); ls.slice(0, 2).forEach((l, i) => text(l, 53, 154 + i * 8, '#17161c', 6));
+      // кнопка
+      box(BTN.x, BTN.y, BTN.w, BTN.h, st ? '#2b2a33' : '#19ff9c', '#fff'); text('ПОДАТЬ', BTN.x + BTN.w / 2, BTN.y + 9, st ? '#9a9aa6' : '#17161c', 6, 'center');
+      // штамп вердикта
+      if (st === 1 && et > 14) {
+        const k = clamp((et - 14) / 8, 0, 1);
+        ctx.save(); ctx.translate(217, 70 - (1 - k) * 60); ctx.rotate(-0.22); ctx.globalAlpha = 0.5 + k * 0.5;
+        const txt = ok ? 'ОДАА' : 'НЕТ', col = ok ? '#1fae5a' : '#d02020';
+        ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.strokeRect(-48, -16, 96, 32); text(txt, 0, -8, col, 16, 'center'); ctx.restore();
+      }
+    },
+  };
+}
+function failScene(reason, retry) {
+  let t = 0;
+  return {
+    pad: 'none',
+    update() { t++; if (t === 30 || t === 36) sfx(1400, 0.05, 'square', -900, 0.08); if (t > 160 && anyPressed) retry(); },
+    draw() {
+      ctx.fillStyle = '#120a0a'; ctx.fillRect(0, 0, VW, VH);
+      spr(IMG.melvi, 50, 40, false, 4);
+      spr(IMG.holos, 210 + (t > 30 ? Math.sin(t * 1.3) * 2 : 0), 70, false, 3);
+      if (t > 20) { const ls = wrap(reason, 140, 8); bubble(100, 24, 160, ls); }
+      if (t > 30 && t < 60) text('ЩЁЛК!', 190, 60, '#fff', 8, 'center');
+      if (t > 70) { text('ХОЛОСУ СДЕЛАЛИ ОБРЕЗАНИЕ.', 160, 128, '#ff5a5a', 8, 'center'); text('ХОЛОС ПРОИГРАЛ.', 160, 142, '#fff', 8, 'center'); }
+      if (t > 160 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА', 160, 166, '#9a9aa6', 6, 'center');
+    },
+  };
+}
+
 // ---------- цикл
 scene = captchaScene();
 let last = 0, acc = 0;
-function tick() { scene.update(); jumpPressed = false; anyPressed = false; click = null; frame++; }
-function render() { ctx.setTransform(SC, 0, 0, SC, 0, 0); ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 1; scene.draw(); }
+function tick() { scene.update(); jumpPressed = false; anyPressed = false; click = null; codes.clear(); frame++; }
+let padMode = null;
+function render() {
+  ctx.setTransform(SC, 0, 0, SC, 0, 0); ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 1; scene.draw();
+  const m = scene.pad || '';
+  if (m !== padMode) { padMode = m; pad.dataset.mode = m; padRelease(); }
+}
 function loop(ts) {
   acc += Math.min(100, ts - last); last = ts;
   while (acc >= 1000 / 60) { tick(); acc -= 1000 / 60; }
@@ -720,4 +1374,4 @@ function loop(ts) {
 requestAnimationFrame(loop);
 
 // хук для отладки и тестов
-window.__G = { startLevel, gotoLevel, buildLevel, keys, tick, render, press() { jumpPressed = true; anyPressed = true; }, get P() { return P; }, get L() { return L; }, get scene() { return scene; }, set scene(s) { scene = s; }, deathScene, endingScene, crystalScene, titleScene, playScene };
+window.__G = { startLevel, gotoLevel, buildLevel, keys, tick, render, press() { jumpPressed = true; anyPressed = true; }, get P() { return P; }, get L() { return L; }, get shots() { return shots; }, get scene() { return scene; }, set scene(s) { scene = s; }, deathScene, endingScene, crystalScene, titleScene, playScene, swimScene, passportScene, failScene, advance, ENEMY, SALT, LAST, codes, pressClick(x, y) { click = { x, y }; anyPressed = true; } };
