@@ -582,6 +582,34 @@ const YELL = ['РОСТИК!!!', 'ТЫ ЧЁ ТВОРИШЬ?!', 'ОПЯТЬ ТЫ!
 const PUTIN_LINES = ['ВЗЯТЬ ЕГО!', 'ЗАДЕРЖАТЬ!', 'ОМОН, ВПЕРЁД!', 'НЕ ЗНАЮ ТАКОГО'];
 const NAVY_LINES = ['ДРУЗЬЯ!', 'БЕГИ, ХОЛОС!', 'ПРЯЧЬСЯ!'];
 const SCAM_LINES = ['ВАШ СЧЁТ!', 'ВЫ ВЫИГРАЛИ!', 'ГОСУСЛУГИ?', 'СЛУЖБА БЕЗОП.', 'НЕ ВЕШАЙТЕ!'];
+// ---------- смертность полицейских Путина: умирают от всего, что может ранить Холоса
+function killCop(c, s = 'БАХ!') {
+  if (c.dead) return;
+  c.dead = true; burst(c.x + 6, c.y + 9, '#4aa3ff', 12); burst(c.x + 6, c.y + 9, '#ffd23e', 6);
+  L.pops.push({ x: c.x - 4, y: c.y - 8, s, t: 35 }); sfx(160, 0.2, 'sawtooth', -80, 0.06);
+}
+// враги, которых нельзя касаться (кроме Путина с Навальным — это его же свита — и самих полицейских)
+const COP_FOES = new Set(['y', 'y2', 'd', 'fat', 'ari', 'bar', 'alt', 'poc', 'mak', 'ros', 'mk', 'laa', 'vlad', 'tel', 'ano']);
+// шипы под ногами, тело врага, молоток Фейл2бана, босс
+function copDangerous(c) {
+  const ty = Math.floor((c.y + c.h - 2) / T);
+  if (ty >= 0 && ty < H && c.y + c.h > ty * T + 7) {
+    for (let tx = Math.floor(c.x / T); tx <= Math.floor((c.x + c.w) / T); tx++) if (tx >= 0 && tx < L.W && L.g[ty][tx] === '^') return true;
+  }
+  for (const o of L.ents) {
+    if (o.dead) continue;
+    if (COP_FOES.has(o.t) && ov(c, o, 3)) return true;
+    if (o.t === 'ban' && (o.st === 3 || o.st === 4) && ov(c, { x: o.hx, y: o.hy, w: 24, h: 12 }, 1)) return true;
+  }
+  const b = L.boss;
+  return !!(b && !b.dead && ov(c, b, b.kind === 'nos' ? 5 : 10));
+}
+// снаряд задел полицейского: тот погибает. Возвращает true, если кто-то погиб
+function copHit(s, i = 0) {
+  let hit = false;
+  for (const c of L.ents) if (c.t === 'pol' && !c.dead && ov(s, c, i)) { killCop(c); hit = true; }
+  return hit;
+}
 const ENEMY = {
   // DiabloFAT: веер из трёх огненных шаров
   fat(e, dx, dy) {
@@ -847,7 +875,8 @@ const ENEMY = {
     if (ov(P, { x: e.ax, y, w: 12, h: 18 }, 3)) hurt(1, 'navy');
     else if (ov(P, { x: e.bx, y, w: 12, h: 18 }, 3)) hurt(1, 'putin');
   },
-  // полицейский Путина: разгоняется быстрее Холоса, перепрыгивает стены, в ямы падает; задержав — замирает
+  // полицейский Путина: разгоняется быстрее Холоса, перепрыгивает стены, в ямы падает; задержав — замирает.
+  // Он смертен для всего, что бьёт Холоса: шипы, снаряды, тела врагов и боссов (см. copDangerous / copHit)
   pol(e, dx) {
     if (--e.life <= 0 || e.y > H * T + 30) { e.dead = true; if (e.life <= 0) burst(e.x + 6, e.y + 9, '#4aa3ff', 10); return; }
     if (e.hold > 0) { e.hold--; e.vx *= 0.8; }
@@ -856,6 +885,7 @@ const ENEMY = {
     e.vy = Math.min(7, e.vy + 0.35); e.ground = false;
     moveX(e, e.vx); const blocked = e.vx === 0 && Math.abs(vx0) > 0.5;
     moveY(e, e.vy);
+    if (copDangerous(e)) { killCop(e); return; }
     if (blocked && e.ground) e.vy = -6.2;
     if (ov(P, e, 3)) {
       const hp = P.hp; hurt(1, 'putin');
@@ -1052,20 +1082,18 @@ const playScene = {
         if (++s.t === 38) { s.vx = -s.vx; s.vy = -s.vy; }
         s.x += s.vx; s.y += s.vy;
         if (ov(P, s)) hurt(1, 'req');
+        copHit(s);   // души пронзают: полицейский гибнет, линия летит дальше
         return s.t < 76;
       }
       if (s.k === 'nbul') {   // пуля Навального: летит в полицейских, Холоса не задевает
         s.x += s.vx; s.y += s.vy;
         if (++s.t > 70 || tileAt(s.x + 2, s.y + 1)) { burst(s.x, s.y, '#ffd23e', 3); return false; }
-        for (const c of L.ents) if (c.t === 'pol' && !c.dead && ov(s, c)) {
-          c.dead = true; burst(c.x + 6, c.y + 9, '#4aa3ff', 12); burst(c.x + 6, c.y + 9, '#ffd23e', 6);
-          L.pops.push({ x: c.x - 4, y: c.y - 8, s: 'БАХ!', t: 35 }); sfx(160, 0.2, 'sawtooth', -80, 0.06); return false;
-        }
-        return true;
+        return !copHit(s);
       }
       if (s.k === 'quake') {   // ударная волна Баратрума: катится по земле только в пределах его дорожки
         s.x += s.vx;
         if (ov(P, s, 1)) hurt(1, 'bar');
+        copHit(s, 1);
         if (frame % 3 === 0) parts.push({ x: s.x + 5, y: s.y + 6, vx: 0, vy: -0.8, life: 12, col: '#cfeeff' });
         return s.x > s.x0 && s.x + s.w < s.x1;
       }
@@ -1084,6 +1112,7 @@ const playScene = {
         if (s.k === 'cube' && P.hp < hp && P.hp > 0 && Math.random() < BASH_CHANCE) bash();   // удар прошёл — с шансом ещё и оглушает
         if (!ground) return false;
       }
+      if (copHit(s) && !ground) return false;   // любой вражеский снаряд убивает полицейского (волны по земле — насквозь)
       return s.x > -40 && s.x < L.W * T + 40 && s.y < H * T + 40 && s.y > -300;
     });
     for (const p of parts) { p.x += p.vx; p.y += p.vy; p.vy += 0.12; p.life--; }
