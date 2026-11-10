@@ -76,6 +76,7 @@ const KM = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right'
 addEventListener('keydown', e => {
   const k = KM[e.code];
   codes.add(e.code);
+  if (e.code === 'KeyF' && !e.repeat) toggleFs();
   if (e.code === 'ArrowDown' || e.code === 'ArrowUp') e.preventDefault();
   if (k) { e.preventDefault(); if (k === 'jump' && !keys.jump) jumpPressed = true; keys[k] = 1; }
   if (!e.repeat && (e.code === 'Enter' || e.code === 'Space' || k === 'jump')) anyPressed = true;
@@ -90,13 +91,62 @@ cv.addEventListener('pointerdown', e => {
 });
 const pad = document.getElementById('pad');
 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) pad.classList.add('on');
-pad.querySelectorAll('button').forEach(b => {
-  const k = b.dataset.k;
-  const dn = e => { e.preventDefault(); if (k === 'jump' && !keys.jump) { jumpPressed = true; anyPressed = true; } keys[k] = 1; b.classList.add('act'); initAudio(); };
-  const up = e => { e.preventDefault(); keys[k] = 0; b.classList.remove('act'); };
-  b.addEventListener('pointerdown', dn);
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(n => b.addEventListener(n, up));
-});
+// Экранные кнопки: один обработчик на всё окно. Касание привязано к pointerId, палец можно
+// вести с кнопки на кнопку, а зона нажатия у кнопки шире видимой (у прыжка — заметно шире).
+const padBtns = [...pad.querySelectorAll('button')].map(b => ({ b, k: b.dataset.k, grow: b.dataset.k === 'jump' ? 28 : 10, held: false }));
+const padPtr = new Map(); // pointerId -> нажатая кнопка (null, если палец ушёл с кнопок)
+const padActive = () => pad.classList.contains('on') && pad.dataset.mode !== 'none';
+function padHit(x, y) {
+  let best = null, bs = 1e9;
+  for (const o of padBtns) {
+    const r = o.b.getBoundingClientRect(); if (!r.width) continue;
+    const dx = Math.max(r.left - x, 0, x - r.right), dy = Math.max(r.top - y, 0, y - r.bottom), d = Math.hypot(dx, dy);
+    if (d > o.grow) continue;
+    const score = d - (o.k === 'jump' ? 8 : 0); // в спорной зоне между кнопками выигрывает прыжок
+    if (score < bs) { bs = score; best = o.k; }
+  }
+  return best;
+}
+function padSync() {
+  const on = new Set(padPtr.values());
+  for (const o of padBtns) {
+    const h = on.has(o.k); if (h === o.held) continue;
+    o.held = h; o.b.classList.toggle('act', h); keys[o.k] = h ? 1 : 0;
+    if (h) { if (o.k === 'jump') { jumpPressed = true; anyPressed = true; } initAudio(); }
+  }
+}
+function padRelease() { padPtr.clear(); padSync(); }
+addEventListener('pointerdown', e => {
+  if (!padActive() || (e.target.closest && e.target.closest('#fs'))) return;
+  const k = padHit(e.clientX, e.clientY); if (!k) return;
+  e.preventDefault(); e.stopPropagation(); padPtr.set(e.pointerId, k); padSync();
+}, true);
+addEventListener('pointermove', e => {
+  if (!padPtr.has(e.pointerId)) return;
+  e.preventDefault(); padPtr.set(e.pointerId, padHit(e.clientX, e.clientY)); padSync();
+}, true);
+for (const n of ['pointerup', 'pointercancel']) addEventListener(n, e => { if (padPtr.delete(e.pointerId)) padSync(); }, true);
+addEventListener('blur', padRelease);
+document.addEventListener('visibilitychange', padRelease);
+
+// ---------- полный экран
+const fsBtn = document.getElementById('fs'), fsRoot = document.documentElement;
+const fsReq = fsRoot.requestFullscreen || fsRoot.webkitRequestFullscreen;
+const fsOn = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+if (!fsReq) fsBtn.hidden = true; // например, iPhone Safari не умеет
+function toggleFs() {
+  try {
+    if (fsOn()) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      try { screen.orientation.unlock(); } catch (e) { }
+    } else {
+      const lock = () => { try { screen.orientation.lock('landscape').catch(() => { }); } catch (e) { } };
+      const r = fsReq.call(fsRoot); if (r && r.then) r.then(lock).catch(() => { }); else lock();
+    }
+  } catch (e) { }
+}
+fsBtn.addEventListener('click', e => { e.preventDefault(); toggleFs(); fsBtn.blur(); initAudio(); });
+for (const n of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(n, () => { fsBtn.classList.toggle('on', fsOn()); padRelease(); });
 
 // ---------- сохранение
 function save(n) { try { localStorage.setItem('holos_lvl', String(n)); } catch (e) { } }
@@ -1246,8 +1296,8 @@ function passportScene(done) {
       ctx.fillStyle = '#26222e'; ctx.fillRect(0, 0, VW, VH);
       ctx.fillStyle = '#3a3248'; ctx.fillRect(0, 138, VW, 42);
       text('ГРАНИЦА ИЗРАИЛЯ', 6, 4, '#19ff9c', 6);
-      text('ВРЕМЯ', 150, 4, '#9a9aa6', 6);
-      box(184, 4, 130, 6, '#2b2a33', '#000'); const left = clamp(1 - t / TIME, 0, 1); ctx.fillStyle = left > 0.3 ? '#19ff9c' : '#ff5a5a'; ctx.fillRect(184, 4, 130 * left, 6);
+      text('ВРЕМЯ', 172, 4, '#9a9aa6', 6);
+      box(206, 4, 108, 6, '#2b2a33', '#000'); const left = clamp(1 - t / TIME, 0, 1); ctx.fillStyle = left > 0.3 ? '#19ff9c' : '#ff5a5a'; ctx.fillRect(206, 4, 108 * left, 6);
       // правила
       box(4, 16, 110, 120, '#f1ead2', '#17161c');
       text('ПРАВИЛА ВЪЕЗДА', 59, 20, '#a02020', 6, 'center');
@@ -1313,7 +1363,7 @@ let padMode = null;
 function render() {
   ctx.setTransform(SC, 0, 0, SC, 0, 0); ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 1; scene.draw();
   const m = scene.pad || '';
-  if (m !== padMode) { padMode = m; pad.dataset.mode = m; }
+  if (m !== padMode) { padMode = m; pad.dataset.mode = m; padRelease(); }
 }
 function loop(ts) {
   acc += Math.min(100, ts - last); last = ts;
