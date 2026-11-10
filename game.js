@@ -589,6 +589,7 @@ function killCop(c, s = 'БАХ!') {
   L.pops.push({ x: c.x - 4, y: c.y - 8, s, t: 35 }); sfx(160, 0.2, 'sawtooth', -80, 0.06);
 }
 // враги, которых нельзя касаться (кроме Путина с Навальным — это его же свита — и самих полицейских)
+const COP_RUN = 4.4;
 const COP_FOES = new Set(['y', 'y2', 'd', 'fat', 'ari', 'bar', 'alt', 'poc', 'mak', 'ros', 'mk', 'laa', 'vlad', 'tel', 'ano']);
 // шипы под ногами, тело врага, молоток Фейл2бана, босс
 function copDangerous(c) {
@@ -842,7 +843,7 @@ const ENEMY = {
     if (ov(P, e, 3)) hurt(1, 'ano');
   },
   // Навальный и В. В. Путин. Путин прохаживается у правого края платформы и спускает на игрока полицию:
-  // полицейские бегут быстрее Холоса — убежать нельзя, только перепрыгнуть. Навальный у левого края
+  // полицейские мчатся быстрее Холоса, но не умеют тормозить и разворачиваться — уворачивайся и убегай, пока он скользит. Навальный у левого края
   // отстреливает полицейских; его пули Холоса не задевают, но касаться самих двоих по-прежнему больно.
   duo(e) {
     if (e.cd === undefined) { e.cd = 50; e.ncd = 20; e.cops = []; e.flash = 0; }
@@ -877,16 +878,29 @@ const ENEMY = {
   },
   // полицейский Путина: разгоняется быстрее Холоса, перепрыгивает стены, в ямы падает; задержав — замирает.
   // Он смертен для всего, что бьёт Холоса: шипы, снаряды, тела врагов и боссов (см. copDangerous / copHit)
-  pol(e, dx) {
+  pol(e, dx) {   // COP_RUN — скорость рывка (Холос бежит со скоростью 2)
     if (--e.life <= 0 || e.y > H * T + 30) { e.dead = true; if (e.life <= 0) burst(e.x + 6, e.y + 9, '#4aa3ff', 10); return; }
-    if (e.hold > 0) { e.hold--; e.vx *= 0.8; }
-    else { const want = Math.abs(dx) > 4 ? (dx < 0 ? -1 : 1) : 0; if (want) e.face = want; e.vx += (want * 2.9 - e.vx) * 0.2; }
+    // Три фазы: рывок к игроку (быстро, но без руления) → тормозной путь юзом (очень длинный) → медленный разворот
+    if (e.mode === undefined) { e.mode = 'run'; e.dir = e.face || 1; e.turn = 0; }
+    if (e.hold > 0) { e.hold--; e.vx *= 0.8; e.mode = 'turn'; e.turn = 40; }
+    else if (e.mode === 'run') {
+      e.vx += (e.dir * COP_RUN - e.vx) * 0.12; e.face = e.dir;
+      if (dx * e.dir < -6) e.mode = 'brake';   // проскочил мимо игрока
+    } else if (e.mode === 'brake') {
+      e.vx *= 0.978; e.face = e.dir;   // почти нет трения: скользит и скользит
+      if (Math.abs(e.vx) < 0.25) { e.vx = 0; e.mode = 'turn'; e.turn = 80; }
+    } else {   // turn
+      e.vx *= 0.8; e.turn--;
+      if (e.turn === 40) e.face = -e.dir;   // сначала замер, потом нехотя развернулся
+      if (e.turn <= 0) { e.dir = Math.abs(dx) > 4 ? (dx < 0 ? -1 : 1) : -e.dir; e.face = e.dir; e.mode = 'run'; }
+    }
     const vx0 = e.vx;
     e.vy = Math.min(7, e.vy + 0.35); e.ground = false;
     moveX(e, e.vx); const blocked = e.vx === 0 && Math.abs(vx0) > 0.5;
     moveY(e, e.vy);
     if (copDangerous(e)) { killCop(e); return; }
-    if (blocked && e.ground) e.vy = -6.2;
+    if (blocked && e.mode === 'run' && e.ground) e.vy = -6.2;
+    else if (blocked && e.mode === 'brake') { e.mode = 'turn'; e.turn = 80; }
     if (ov(P, e, 3)) {
       const hp = P.hp; hurt(1, 'putin');
       if (scene !== playScene) return;
