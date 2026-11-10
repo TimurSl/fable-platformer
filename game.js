@@ -238,18 +238,20 @@ let frame = 0, scene = null, L = null, P = null, shots = [], parts = [], safe = 
 
 // ---------- построение уровней
 const SIZES = { y: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26],
-  fat: [16, 18], ari: [16, 18], bar: [22, 20], alt: [14, 18], poc: [16, 20], tel: [10, 12], ban: [24, 12], ano: [40, 16], duo: [12, 18] };
+  fat: [16, 18], ari: [16, 18], bar: [22, 20], alt: [14, 18], poc: [16, 20], tel: [10, 12], ban: [24, 12], ano: [40, 16], duo: [12, 18],
+  mak: [16, 24], mk: [16, 24], ros: [22, 15], laa: [16, 18], vlad: [16, 22] };
 // имена над особыми врагами (показываются по-русски); телефонных мошенников больше нет — теперь это Шайтаны
 // (запасной вариант игры слов: 'МОШОННИКИ')
-const NAMES = { fat: 'ДиаблоФАТ', ari: 'Арирали', bar: 'Баратрум', alt: 'Сэм Альтман', poc: 'Опасный Поцык', tel: 'ШАЙТАНЫ', ban: 'Фейл2бан', ano: 'Анонимус' };
+const NAMES = { fat: 'ДиаблоФАТ', ari: 'Арирали', bar: 'Баратрум', alt: 'Сэм Альтман', poc: 'Опасный Поцык', tel: 'ШАЙТАНЫ', ban: 'Фейл2бан', ano: 'Анонимус',
+  mak: 'Махито', ros: 'Ростик', laa: 'лааадно', vlad: 'Влад' };
 // какие новые враги встречаются на уровне (первый раз каждый гарантированно появляется)
 const POOL = {
   2: ['poc'], 3: ['poc'],
   4: ['tel'], 5: ['tel', 'bar'], 6: ['tel', 'bar', 'poc'],
   7: ['ari'], 8: ['ari', 'fat'], 9: ['ari', 'fat', 'bar'],
   10: ['fat', 'ari', 'poc'],
-  11: ['ban', 'tel'], 12: ['ban', 'ano'], 13: ['ban', 'ano', 'bar'], 14: ['ban', 'ano', 'fat', 'tel'],
-  15: ['alt', 'duo'], 16: ['alt', 'duo', 'ari'], 17: ['alt', 'duo', 'ano'], 18: ['alt', 'duo', 'ban', 'bar'], 19: ['alt', 'duo', 'fat', 'tel', 'ari'],
+  11: ['ban', 'tel', 'mak'], 12: ['ban', 'ano', 'ros'], 13: ['ban', 'ano', 'bar', 'laa'], 14: ['ban', 'ano', 'fat', 'tel', 'vlad'],
+  15: ['alt', 'duo', 'laa'], 16: ['alt', 'duo', 'ari', 'vlad'], 17: ['alt', 'duo', 'ano', 'mak'], 18: ['alt', 'duo', 'ban', 'bar', 'ros', 'vlad'], 19: ['alt', 'duo', 'fat', 'tel', 'ari', 'mak', 'laa'],
 };
 function ent(t, x, y, extra) {
   const size = SIZES[t];
@@ -288,6 +290,14 @@ function buildLevel(n) {
       ents.push(ent('ban', a * T, top() - 12, { w, gy: top(), hx: a * T + w / 2 - 12, hy: top() - 90, st: 0, bt: 0, vy: 0, cd: 30 })); flat(2);
     }
     else if (t === 'ano') { flat(2); const a = x; flat(ri(9, 11)); ents.push(ent('ano', (a + 3) * T, top() - 16, { x0: a * T, x1: x * T - 40, dir: -1, gy: top(), oy: 0, hv: 0, cd: 50 })); flat(2); }
+    else if (t === 'mak') { flat(2); ents.push(ent('mak', x * T, top() - 24, { cd: 70, st: 0, tm: 0, anim: 0 })); flat(ri(6, 7)); }
+    else if (t === 'laa') { flat(2); ents.push(ent('laa', x * T, top() - 18, { cd: 70, anim: 0 })); flat(ri(5, 6)); }
+    else if (t === 'vlad') { flat(2); ents.push(ent('vlad', x * T, top() - 22, { cd: 80, n: 0, bt: 0, face: -1 })); flat(ri(5, 6)); }
+    else if (t === 'ros') {
+      flat(2); const a = x; flat(ri(10, 12));
+      ents.push(ent('ros', (a + 4) * T, top() - 15, { x0: a * T, x1: x * T - 22, dir: -1, vx: 0, vy: 0, ground: true, air: false, cd: 40, jx: 0.6, mcd: 90, mk: null }));
+      flat(2);
+    }
     else if (t === 'duo') { flat(2); const a = x; flat(ri(8, 10)); ents.push(ent('duo', a * T, top() - 18, { w: (x - a) * T, ph: R() * 6, gy: top(), ax: a * T, bx: a * T })); flat(2); }
   };
   flat(9);
@@ -516,6 +526,7 @@ function lobAim(sx, sy, g, speed, tmin, tmax) {
   // положение за n кадров при шаге «сначала скорость, потом сдвиг»: y = y0 + n·vy0 + g·n(n+1)/2
   return { vx: (q.x + q.w / 2 - sx) / n, vy: (q.y + q.h / 2 - sy - g * n * (n + 1) / 2) / n, n };
 }
+const YELL = ['РОСТИК!!!', 'ТЫ ЧЁ ТВОРИШЬ?!', 'ОПЯТЬ ТЫ!', 'РОСТИК, БЛИН!', 'ИДИ СЮДА!!!', 'Я ЖЕ ГОВОРИЛ!', 'РОСТИИИК!!!'];
 const SCAM_LINES = ['ВАШ СЧЁТ!', 'ВЫ ВЫИГРАЛИ!', 'ГОСУСЛУГИ?', 'СЛУЖБА БЕЗОП.', 'НЕ ВЕШАЙТЕ!'];
 const ENEMY = {
   // DiabloFAT: веер из трёх огненных шаров
@@ -597,6 +608,87 @@ const ENEMY = {
       }
     }
     if (ov(P, e, 3)) hurt(1, 'poc');
+  },
+  // Махито: 5000 часов в Доте. Атака — Requiem of Souls от Shadow Fiend: замах, и во все стороны веером
+  // разлетаются линии душ, дойдя до края — разворачиваются и летят обратно (бить будут и на возврате)
+  mak(e, dx, dy) {
+    e.face = dx < 0 ? -1 : 1; if (e.anim) e.anim--; if (e.bub && e.bub.t > 0) e.bub.t--;
+    if (e.st === 0) {
+      if (Math.abs(dx) < 190 && Math.abs(dy) < 110 && --e.cd <= 0) {
+        e.st = 1; e.tm = 55; e.bub = { lines: e.seen ? ['РЕКВИЕМ!'] : ['5000 ЧАСОВ', 'В ДОТЕ 2'], t: 55 }; e.seen = true;
+        sfx(110, 0.8, 'sawtooth', 160, 0.07);
+      }
+    } else if (--e.tm <= 0) {
+      const cx = e.x + e.w / 2 - 3, cy = e.y + 8, a0 = Math.random() * 0.5;
+      for (let i = 0; i < 12; i++) { const a = a0 + i * Math.PI / 6; shots.push({ k: 'req', x: cx, y: cy, vx: Math.cos(a) * 1.9, vy: Math.sin(a) * 1.9, w: 6, h: 6, t: 0 }); }
+      e.st = 0; e.cd = 190; e.anim = 12; shake = Math.max(shake, 4); burst(cx + 3, cy + 3, '#ff3b2a', 10); sfx(70, 0.5, 'sawtooth', 300, 0.09);
+    }
+    if (ov(P, e, 3)) hurt(1, 'mak');
+  },
+  // Ростик: бродит и случайно прыгает; после приземления может призвать рядом Махито, который на него орёт
+  ros(e, dx, dy) {
+    if (e.mk && e.mk.dead) e.mk = null;
+    if (e.mcd > 0) e.mcd--;
+    const was = e.air;
+    if (e.mk && Math.abs(e.mk.x - e.x) < 70 && e.ground) e.dir = e.mk.x < e.x ? 1 : -1;   // убегает от Махито
+    else if (e.ground && Math.random() < 0.006) e.dir = -e.dir;
+    e.vx = e.dir * (e.ground ? 0.4 : e.jx);
+    if (e.x <= e.x0) { e.x = e.x0; e.dir = 1; } if (e.x >= e.x1) { e.x = e.x1; e.dir = -1; }
+    if (e.ground && --e.cd <= 0) {   // случайный прыжок: высота, дальность и пауза каждый раз разные
+      e.vy = -(3.2 + Math.random() * 2.6); e.jx = 0.5 + Math.random() * 1.1; e.cd = (e.mk ? 18 : 35) + Math.random() * 90;
+      if (Math.random() < 0.3) e.dir = -e.dir; sfx(380 + Math.random() * 200, 0.12, 'square', 200, 0.04);
+    }
+    e.vy = Math.min(7, e.vy + 0.35); e.ground = false;
+    moveX(e, e.vx); if (e.x < e.x0) e.x = e.x0; if (e.x > e.x1) e.x = e.x1;
+    moveY(e, e.vy); e.air = !e.ground;
+    if (was && e.ground && !e.mk && e.mcd <= 0 && Math.abs(dx) < 220 && Math.random() < 0.6) {   // приземлился — призвал Махито
+      const side = Math.random() < 0.5 ? -1 : 1; let mx = e.x + side * (34 + Math.random() * 18);
+      if (mx < e.x0 - 4 || mx > e.x1 + 22) mx = e.x - side * 40;
+      e.mk = ent('mk', mx, e.y + e.h - 24, { vx: 0, vy: 0, ground: true, ros: e, life: 420, yl: 40, ph: 0 });
+      L.ents.push(e.mk); e.mcd = 260;
+      burst(mx + 8, e.y + 4, '#6fd0e0', 12); sfx(200, 0.4, 'triangle', 700, 0.06);
+    }
+    if (e.y > H * T + 30) { e.dead = true; return; }
+    if (ov(P, e, 4)) hurt(1, 'ros');
+  },
+  // призванный Махито: идёт к Ростику и всё время на него орёт; игроку тоже лучше не попадаться
+  mk(e, dx, dy) {
+    const r = e.ros; if (e.bub && e.bub.t > 0) e.bub.t--;
+    if (--e.life <= 0 || r.dead || e.y > H * T + 30) { e.dead = true; burst(e.x + 8, e.y + 12, '#6fd0e0', 14); return; }
+    const gap = r.x + r.w / 2 - (e.x + e.w / 2), near = Math.abs(gap) < 30;
+    e.face = gap < 0 ? -1 : 1; e.vx = near ? 0 : e.face * 0.95;
+    e.vy = Math.min(7, e.vy + 0.35); e.ground = false;
+    moveX(e, e.vx); moveY(e, e.vy);
+    if (--e.yl <= 0) {
+      e.yl = 52; e.line = ((e.line === undefined ? Math.floor(Math.random() * YELL.length) : e.line) + 1) % YELL.length;
+      e.bub = { lines: [YELL[e.line]], t: 52 }; sfx(150 + Math.random() * 60, 0.18, 'sawtooth', -30, 0.04);
+    }
+    if (ov(P, e, 3)) hurt(1, 'mk');
+  },
+  // лааадно: аккуратно целится и пускает «UwU» — розовое слово летит прямо в игрока
+  laa(e, dx, dy) {
+    e.face = dx < 0 ? -1 : 1; if (e.anim) e.anim--; if (e.bub && e.bub.t > 0) e.bub.t--;
+    if (Math.abs(dx) < 190 && Math.abs(dy) < 110 && --e.cd <= 0) {
+      const sx = e.x + 8 - 9, sy = e.y + 6, d = Math.hypot(dx, dy) || 1;
+      shots.push({ k: 'uwu', x: sx, y: sy, vx: dx / d * 1.7, vy: dy / d * 1.7, w: 18, h: 7, t: 0 });
+      e.cd = 95; e.anim = 14; e.bub = { lines: ['лааадно...'], t: 30 };
+      sfx(1100, 0.12, 'triangle', 500, 0.05); sfx(1500, 0.1, 'triangle', -300, 0.04);
+    }
+    if (ov(P, e, 3)) hurt(1, 'laa');
+  },
+  // Влад: швыряется флагами случайных стран, по два подряд
+  vlad(e, dx, dy) {
+    e.face = dx < 0 ? -1 : 1; if (e.bub && e.bub.t > 0) e.bub.t--;
+    const near = Math.abs(dx) < 190 && Math.abs(dy) < 110;
+    if (e.n === 0 && near && --e.cd <= 0) { e.n = 2; e.bt = 0; }
+    if (e.n > 0 && --e.bt <= 0) {
+      const f = Math.floor(Math.random() * FLAG_NAMES.length), d = Math.hypot(dx, dy) || 1, sp = 1.9;
+      const a = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.25;
+      shots.push({ k: 'flag', f, x: e.x + 2, y: e.y + 6, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, w: 12, h: 8, t: 0 });
+      e.bub = { lines: [FLAG_NAMES[f]], t: 40 }; e.bt = 18; e.n--; if (e.n === 0) e.cd = 100;
+      sfx(500 + Math.random() * 500, 0.1, 'square', 150, 0.035);
+    }
+    if (ov(P, e, 3)) hurt(1, 'vlad');
   },
   // Шайтаны (бывшие телефонные мошенники): медленно преследуют, если подойти близко
   tel(e) {
@@ -745,10 +837,18 @@ const playScene = {
         if (s.t >= 18) { hitBoss(); return false; }
         return true;
       }
+      if (s.k === 'req') {   // линии душ: идут от Махито, на полпути разворачиваются; стены не держат
+        if (++s.t === 38) { s.vx = -s.vx; s.vy = -s.vy; }
+        s.x += s.vx; s.y += s.vy;
+        if (ov(P, s)) hurt(1, 'req');
+        return s.t < 76;
+      }
+      if (s.k === 'flag') { s.t++; s.y += Math.sin(s.t * 0.25) * 0.7; }   // флаг «трепещет»
+      if (s.k === 'uwu' && ++s.t % 5 === 0) parts.push({ x: s.x + 8, y: s.y + 2, vx: 0, vy: -0.4, life: 18, col: '#ff7aa8' });
       s.vy += s.g || 0; s.x += s.vx; s.y += s.vy; s.rot = (s.rot || 0) + 0.25;
       const ground = s.k === 'wave' || s.k === 'sweep';
       if (!ground && tileAt(s.x + s.w / 2, s.y + s.h / 2)) {
-        burst(s.x, s.y, { b: '#c05f10', crystal: '#f7f1fa', fire: '#ff8a2a', tok: '#4aa3ff', stump: '#8a5a2c' }[s.k] || '#ff4fd8', s.k === 'stump' ? 14 : 5);
+        burst(s.x, s.y, { b: '#c05f10', crystal: '#f7f1fa', fire: '#ff8a2a', tok: '#4aa3ff', stump: '#8a5a2c', uwu: '#ff7aa8', flag: '#ffffff' }[s.k] || '#ff4fd8', s.k === 'stump' ? 14 : 5);
         if (s.k === 'b') sfx(1200, 0.05, 'square', -600, 0.03);
         if (s.k === 'stump') { shake = Math.max(shake, 5); sfx(70, 0.3, 'sawtooth', -20, 0.09); }
         return false;
@@ -816,6 +916,20 @@ const playScene = {
         spr(IMG.poc, e.x, e.y - (e.anim ? 1 : 0), e.face < 0);
         if (e.st === 2) spr(IMG.stump, e.x + 8 - 9, e.y - 19 + (frame % 4 < 2 ? 0 : 1), false);   // замах пнём
       }
+      else if (e.t === 'mak') {
+        const w = e.st === 1;
+        spr(IMG.mak, e.x + (w ? (frame % 4 < 2 ? -1 : 1) : 0), e.y - (e.anim ? 1 : 0), false);
+        if (w) for (let i = 0; i < 8; i++) {   // души слетаются к нему
+          const a = frame * 0.18 + i * Math.PI / 4, r = 8 + 36 * (e.tm / 55);
+          ctx.fillStyle = i % 2 ? '#ff3b2a' : '#ffb03a'; ctx.fillRect(Math.round(e.x + 8 + Math.cos(a) * r), Math.round(e.y + 11 + Math.sin(a) * r), 3, 3);
+        }
+      }
+      else if (e.t === 'ros') {
+        spr(IMG.ros, e.x, e.y + (e.air ? -1 : 0), e.dir < 0);
+      }
+      else if (e.t === 'mk') spr(IMG.mak, e.x + (frame % 6 < 3 ? 0 : 1), e.y, e.face < 0);
+      else if (e.t === 'laa') spr(IMG.laa, e.x, e.y - (e.anim ? 1 : 0), e.face < 0);
+      else if (e.t === 'vlad') spr(IMG.vlad, e.x, e.y + (e.n > 0 && frame % 8 < 4 ? -1 : 0), e.face < 0);
       else if (e.t === 'tel') {
         spr(IMG.tel, e.x, e.y, false);
         if (e.ag && frame % 16 < 8) { ctx.fillStyle = '#ffd23e'; for (const o of [-1, 1]) { ctx.fillRect(e.x + 5 + o * 9, e.y + 2, 1, 3); ctx.fillRect(e.x + 5 + o * 12, e.y + 4, 1, 3); ctx.fillRect(e.x + 5 + o * 9, e.y + 7, 1, 3); } }
@@ -845,9 +959,17 @@ const playScene = {
       box(bx, by, w, bh, '#fff', '#17161c');
       lines.forEach((l, i) => text(l, bx + w / 2, by + 3 + i * 8, '#17161c', 6, 'center', false));
     }
+    // реплики новых врагов (пузырь над головой)
+    for (const e of L.ents) {
+      if (e.dead || !e.bub || e.bub.t <= 0) continue;
+      const lines = e.bub.lines, w = Math.max(...lines.map(l => textW(l, 6))) + 8, bh = lines.length * 8 + 4;
+      const bx = Math.round(e.x + e.w / 2 - w / 2), by = Math.round(e.y - 6 - bh);
+      box(bx, by, w, bh, '#fff', '#17161c');
+      lines.forEach((l, i) => text(l, bx + w / 2, by + 3 + i * 8, e.t === 'mk' ? '#a02020' : '#17161c', 6, 'center', false));
+    }
     // имена особых врагов, когда игрок рядом
     for (const e of L.ents) {
-      if (e.dead || !(e.name || e.t === 'duo') || (e.t === 'poc' && e.talk && e.st)) continue;
+      if (e.dead || !(e.name || e.t === 'duo') || (e.t === 'poc' && e.talk && e.st) || (e.bub && e.bub.t > 0)) continue;
       if (Math.abs(P.x - (e.x + e.w / 2)) > 120 || Math.abs(P.y - (e.y + e.h / 2)) > 110) continue;
       if (e.t === 'duo') { text('Навальный', e.ax + 6, e.gy - 27, '#ffe27a', 6, 'center'); text('В. В. Путин', e.bx + 6, e.gy - 36, '#ffe27a', 6, 'center'); }
       else if (e.t === 'ban') text(e.name, e.hx + 12, e.hy - 9, '#ffe27a', 6, 'center');
@@ -874,6 +996,13 @@ const playScene = {
       else if (s.k === 'fire') { ctx.fillStyle = '#e03020'; ctx.fillRect(s.x, s.y + 1, 7, 5); ctx.fillRect(s.x + 1, s.y, 5, 7); ctx.fillStyle = frame % 4 < 2 ? '#ffd23e' : '#ff8a2a'; ctx.fillRect(s.x + 2, s.y + 2, 3, 3); }
       else if (s.k === 'tok') { ctx.fillStyle = '#17161c'; ctx.fillRect(s.x - 1, s.y - 1, 8, 8); ctx.fillStyle = '#4aa3ff'; ctx.fillRect(s.x, s.y, 6, 6); ctx.fillStyle = '#fff'; ctx.fillRect(s.x + 1, s.y + 1, 2, 2); ctx.fillRect(s.x + 4, s.y + 4, 1, 1); }
       else if (s.k === 'stump') { ctx.save(); ctx.translate(Math.round(s.x + 9), Math.round(s.y + 7)); ctx.rotate(s.rot * 0.35); ctx.drawImage(IMG.stump, -9, -9.5); ctx.restore(); }
+      else if (s.k === 'req') {   // душа с хвостом из трёх теней
+        const m = Math.hypot(s.vx, s.vy) || 1, ux = s.vx / m, uy = s.vy / m;
+        for (let i = 3; i >= 0; i--) { ctx.fillStyle = ['#ffd23e', '#ff8a2a', '#e03020', '#7a1010'][i]; const k = 6 - i; ctx.fillRect(Math.round(s.x + 3 - k / 2 - ux * i * 4), Math.round(s.y + 3 - k / 2 - uy * i * 4), k, k); }
+        ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(s.x + 2), Math.round(s.y + 2), 2, 2);
+      }
+      else if (s.k === 'uwu') text('UwU', s.x, s.y, '#ff7aa8', 6);
+      else if (s.k === 'flag') { ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, 14, 10); spr(IMG['flag' + s.f], s.x, s.y, s.vx < 0); }
       else if (s.k === 'glitch') { ctx.fillStyle = frame % 4 < 2 ? '#ff4fd8' : '#19ff9c'; ctx.fillRect(s.x, s.y, 6, 6); ctx.fillStyle = '#fff'; ctx.fillRect(s.x + 2, s.y + 2, 2, 2); }
       else if (s.k === 'sweep') { ctx.fillStyle = '#ff4fd8'; ctx.fillRect(s.x, s.y, 10, 10); ctx.fillStyle = '#19ff9c'; ctx.fillRect(s.x + 2, s.y + (frame % 6), 6, 2); }
       else if (s.k === 'wave') { ctx.fillStyle = '#f7f1fa'; ctx.fillRect(s.x, s.y + 3, 10, 6); ctx.fillRect(s.x + 3, s.y, 4, 3); }
