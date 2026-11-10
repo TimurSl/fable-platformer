@@ -766,7 +766,9 @@ const ENEMY = {
     e.ax = e.x + span * (0.5 + 0.5 * Math.sin(e.ph));
     e.bx = e.x + span * (0.5 - 0.5 * Math.sin(e.ph));
     const y = e.gy - 18;
-    if (ov(P, { x: e.ax, y, w: 12, h: 18 }, 3) || ov(P, { x: e.bx, y, w: 12, h: 18 }, 3)) hurt(1, 'duo');
+    // кто именно задел — от этого зависит экран поражения
+    if (ov(P, { x: e.ax, y, w: 12, h: 18 }, 3)) hurt(1, 'navy');
+    else if (ov(P, { x: e.bx, y, w: 12, h: 18 }, 3)) hurt(1, 'putin');
   },
 };
 
@@ -1287,6 +1289,7 @@ function bubble(x, y, w, lines) {
   lines.forEach((l, i) => text(l, x + w / 2, y + 6 + i * 12, '#17161c', 8, 'center', false));
 }
 function deathScene(n, c) {
+  if (c === 'navy' || c === 'putin') return duoDeathScene(n, c);
   let t = 0; const dyn = c === 'dynex', bx = dyn ? 186 : 180, by = dyn ? 62 : 34;   // «порвал туза» — это Дынекс, а не медведь
   return {
     update() {
@@ -1304,6 +1307,70 @@ function deathScene(n, c) {
       if (c === 'dynex') text('ДЫНЕКС ПОРВАЛ ТУЗА', 160, 8, '#ff5a5a', 8, 'center');
       if (t > 100) bubble(16, 60, 150, ['ФУ БЛЯ,', 'НЕВКУСНО']);
       if (t > 150 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА', 160, 166, '#9a9aa6', 6, 'center');
+    },
+  };
+}
+
+// ---------- поражение: Навальный (в зелёнке) и В. В. Путин. who — кто нанёс последний удар
+function kremlinBG() {
+  ctx.fillStyle = '#0d0a1a'; ctx.fillRect(0, 0, VW, VH);
+  for (let i = 0; i < 40; i++) { ctx.fillStyle = (frame + i * 11) % 90 < 70 ? '#ffffff' : '#6b6a76'; ctx.fillRect(Math.floor(hash(i, 1) * VW), Math.floor(hash(i, 2) * 100), 1, 1); }
+  // башня с часами и красной звездой
+  ctx.fillStyle = '#5e1420'; ctx.fillRect(140, 46, 40, 80); ctx.fillRect(147, 32, 26, 14);
+  for (let k = 0; k < 5; k++) ctx.fillRect(160 - 12 + k * 2.4, 32 - k * 2, 24 - k * 4.8, 2);
+  ctx.fillStyle = frame % 40 < 30 ? '#ff3b3b' : '#c02020'; ctx.fillRect(157, 20, 6, 4); ctx.fillRect(155, 21, 10, 2); ctx.fillRect(159, 18, 2, 8);
+  ctx.fillStyle = '#f3e6c0'; ctx.fillRect(153, 56, 14, 14); ctx.fillStyle = '#17161c'; ctx.fillRect(159, 58, 2, 6); ctx.fillRect(159, 62, 5, 2);
+  // кремлёвская стена с зубцами
+  ctx.fillStyle = '#8a1c2c'; ctx.fillRect(0, 118, VW, 62);
+  for (let x = 0; x < VW; x += 16) { ctx.fillRect(x + 3, 106, 10, 12); ctx.fillStyle = '#0d0a1a'; ctx.fillRect(x + 7, 106, 2, 4); ctx.fillStyle = '#8a1c2c'; }
+  ctx.fillStyle = '#6b1420';
+  for (let y = 124, i = 0; y < 160; y += 6, i++) { ctx.fillRect(0, y, VW, 1); for (let x = (i % 2) * 8; x < VW; x += 16) ctx.fillRect(x, y, 1, 6); }
+  ctx.fillStyle = '#2b2a33'; ctx.fillRect(0, 160, VW, 20); ctx.fillStyle = '#4a4858'; ctx.fillRect(0, 160, VW, 2);
+}
+function duoDeathScene(n, who) {
+  let t = 0; const drips = [], put = who === 'putin';
+  const hx = 146, hy = 128;   // где оказывается Холос (масштаб 2)
+  return {
+    update() {
+      t++;
+      if (t === 50) sfx(put ? 90 : 900, put ? 0.4 : 0.15, put ? 'sawtooth' : 'square', put ? -40 : 0, 0.07);
+      if (t === 90) sfx(220, 0.3, 'square', -100);
+      if (frame % 5 === 0) drips.push({ x: 236 + Math.random() * 40, y: 92 + Math.random() * 26, vy: 0.2, c: Math.random() < 0.5 ? '#2ecc71' : '#20a04a' });
+      for (const d of drips) { d.vy += 0.08; d.y += d.vy; }
+      while (drips.length && drips[0].y > 160) drips.shift();
+      if (t > 170 && anyPressed) startLevel(n);
+    },
+    draw() {
+      kremlinBG();
+      // лужа зелёнки под Навальным
+      const pw = Math.min(70, 20 + t / 4); ctx.fillStyle = '#20a04a'; ctx.fillRect(256 - pw / 2, 159, pw, 3); ctx.fillStyle = '#2ecc71'; ctx.fillRect(256 - pw / 2 + 4, 159, pw - 8, 1);
+      spr(IMG.putin, 40, 88, false, 4);
+      spr(IMG.navyGreen, 232, 88, true, 4);
+      for (const d of drips) { ctx.fillStyle = d.c; ctx.fillRect(d.x, d.y, 2, 3); }
+      // Холос прилетает в середину
+      const k = Math.min(1, t / 50);
+      spr(IMG.holos, 20 + (hx - 20) * k, 140 + (hy - 140) * k - Math.sin(k * 3.14) * 50, false, 2);
+      if (put) {
+        // решётка опускается на Холоса
+        const cy = Math.min(118, -60 + Math.max(0, t - 40) * 6);
+        if (t > 40) {
+          ctx.fillStyle = '#4a4858'; ctx.fillRect(138, cy, 44, 3); ctx.fillRect(138, cy + 40, 44, 3);
+          for (let x = 138; x <= 180; x += 7) { ctx.fillStyle = '#17161c'; ctx.fillRect(x, cy, 3, 43); ctx.fillStyle = '#9a9aa6'; ctx.fillRect(x, cy, 1, 43); }
+        }
+        if (t > 80) bubble(8, 40, 128, ['ПОСИДИШЬ,', 'ПОДУМАЕШЬ.']);
+        if (t > 120) bubble(184, 40, 128, ['ДРУЗЬЯ, ЭТО', 'БЕСПРЕДЕЛ!']);
+        text('В. В. ПУТИН ПОСАДИЛ ХОЛОСА', 160, 8, '#ff5a5a', 8, 'center');
+      } else {
+        // Навальный снимает расследование: телефон и мигающий REC
+        if (t > 40) {
+          ctx.fillStyle = '#17161c'; ctx.fillRect(220, 112, 12, 18); ctx.fillStyle = '#4aa3ff'; ctx.fillRect(222, 114, 8, 13);
+          if (frame % 40 < 26) { ctx.fillStyle = '#ff3b3b'; ctx.fillRect(214, 100, 5, 5); text('REC', 222, 99, '#fff', 6); }
+        }
+        if (t > 80) bubble(184, 40, 128, ['ДРУЗЬЯ, ВОТ', 'ДВОРЕЦ ХОЛОСА!']);
+        if (t > 120) bubble(8, 40, 128, ['НЕ ЗНАЮ', 'ТАКОГО.']);
+        text('НАВАЛЬНЫЙ СНЯЛ РАССЛЕДОВАНИЕ', 160, 8, '#2ecc71', 8, 'center');
+      }
+      if (t > 170 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА', 160, 170, '#9a9aa6', 6, 'center');
     },
   };
 }
@@ -1647,4 +1714,4 @@ function loop(ts) {
 requestAnimationFrame(loop);
 
 // хук для отладки и тестов
-window.__G = { startLevel, gotoLevel, buildLevel, keys, tick, render, press() { jumpPressed = true; anyPressed = true; }, get P() { return P; }, get L() { return L; }, get shots() { return shots; }, get scene() { return scene; }, set scene(s) { scene = s; }, deathScene, endingScene, crystalScene, titleScene, playScene, swimScene, passportScene, failScene, advance, ENEMY, SALT, LAST, codes, pressClick(x, y) { click = { x, y }; anyPressed = true; } };
+window.__G = { startLevel, gotoLevel, buildLevel, keys, tick, render, press() { jumpPressed = true; anyPressed = true; }, get P() { return P; }, get L() { return L; }, get shots() { return shots; }, get scene() { return scene; }, set scene(s) { scene = s; }, deathScene, duoDeathScene, endingScene, crystalScene, titleScene, playScene, swimScene, passportScene, failScene, advance, ENEMY, SALT, LAST, codes, pressClick(x, y) { click = { x, y }; anyPressed = true; } };

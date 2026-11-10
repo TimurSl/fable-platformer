@@ -561,4 +561,6 @@ const FLAGS = [
 const FLAG_NAMES = FLAGS.map(f => f[0]);
 FLAGS.forEach((f, i) => { SPR['flag' + i] = f[1]; });
 
+// Навальный, облитый зелёнкой (для экрана поражения): лицо и руки зелёные, брызги на рубашке
+SPR.navyGreen = SPR.navy.map((r, y) => r.replace(/s/g, 'G').replace(/S/g, 'f').replace(/w/g, (c, x) => (x + y) % 3 ? c : 'G'));
 if (typeof module !== 'undefined') module.exports = { PAL, SPR, FLAG_NAMES };
