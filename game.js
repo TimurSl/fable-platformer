@@ -427,7 +427,7 @@ function hurt(n, c) {
 function die(c) {
   if (scene !== playScene) return;
   sfx(300, 0.5, 'sawtooth', -260, 0.08);
-  scene = L.n === SALT ? crystalScene() : deathScene(L.n, c);
+  scene = L.custom ? L.custom.die(c) : L.n === SALT ? crystalScene() : deathScene(L.n, c);
 }
 function onFlash(e) {
   sfx(900, 0.12, 'square', 600);
@@ -554,20 +554,39 @@ const ENEMY = {
     }
     if (ov(P, e, 3)) hurt(1, 'ari');
   },
-  // Baratrum: «!», разбег до стены, отдых
+  // Baratrum: «!», разбег с ускорением до стены. Удар о стену пускает по земле ударную волну назад,
+  // и, если игрок всё ещё рядом, он тут же разворачивается и бежит обратно (второй рывок). Перепрыгнуть
+  // низко не выйдет: во время рывка он подскакивает под игрока, который над ним. Потом недолго отдыхает.
   bar(e, dx, dy) {
+    if (e.by === undefined) { e.by = e.y; e.oy = 0; e.hv = 0; e.combo = 0; }
+    const near = Math.abs(dx) < 200 && Math.abs(dy) < 56;
+    const charge = () => { e.st = 2; e.cd = 150; e.sp = 1.8; };
     if (e.st === 0) {
       e.dir = dx < 0 ? -1 : 1;
-      if (Math.abs(dx) < 180 && Math.abs(dy) < 40 && --e.cd <= 0) { e.st = 1; e.cd = 38; sfx(70, 0.5, 'sawtooth', 120, 0.07); }
+      if (near && --e.cd <= 0) { e.st = 1; e.cd = 24; e.combo = 0; sfx(70, 0.5, 'sawtooth', 120, 0.07); }
     } else if (e.st === 1) {
-      if (--e.cd <= 0) { e.st = 2; e.cd = 150; }
+      if (--e.cd <= 0) charge();
     } else if (e.st === 2) {
-      e.x += e.dir * 3.4;
-      if (frame % 4 === 0) burst(e.x + (e.dir < 0 ? 18 : 4), e.y + 20, '#cfeeff', 2);
-      if (e.x <= e.x0 || e.x >= e.x1) { e.x = clamp(e.x, e.x0, e.x1); e.st = 3; e.cd = 90; shake = Math.max(shake, 5); sfx(60, 0.3, 'sawtooth', -20, 0.08); }
-      else if (--e.cd <= 0) { e.st = 3; e.cd = 90; }
-    } else if (--e.cd <= 0) { e.st = 0; e.cd = 40; }
-    if (ov(P, e, 3)) { if (P.inv <= 0 && e.st === 2) P.vx = e.dir * 4; hurt(1, 'bar'); }
+      e.sp = Math.min(5.2, e.sp + 0.22);
+      e.x += e.dir * e.sp;
+      if (frame % 3 === 0) burst(e.x + (e.dir < 0 ? 18 : 4), e.by + 20, '#cfeeff', 2);
+      // игрок пытается перепрыгнуть — подскок навстречу
+      if (e.oy <= 0 && P.vy !== 0 && Math.abs(dx) < 34 && P.y + P.h < e.by + 6) { e.hv = 3.6; e.oy = 0.01; sfx(260, 0.1, 'square', 200, 0.04); }
+      if (e.x <= e.x0 || e.x >= e.x1) {
+        e.x = clamp(e.x, e.x0, e.x1); shake = Math.max(shake, 7); sfx(60, 0.3, 'sawtooth', -20, 0.08);
+        burst(e.x + (e.dir < 0 ? 0 : 22), e.by + 14, '#cfeeff', 10);
+        // ударная волна катится по земле от стены обратно через всю дорожку
+        shots.push({ k: 'quake', x: e.x + (e.dir < 0 ? 12 : 0), y: e.by + 12, vx: -e.dir * 2.8, vy: 0, w: 10, h: 8, x0: e.x0 - 4, x1: e.x1 + 26 });
+        if (e.combo < 1 && near) { e.st = 4; e.cd = 20; e.combo++; e.dir = -e.dir; }
+        else { e.st = 3; e.cd = 55; }
+      }
+      else if (--e.cd <= 0) { e.st = 3; e.cd = 55; }
+    } else if (e.st === 4) {          // разворот у стены и сразу второй рывок
+      if (--e.cd <= 0) { charge(); sfx(80, 0.3, 'sawtooth', 140, 0.07); }
+    } else if (--e.cd <= 0) { e.st = 0; e.cd = 20; }
+    if (e.oy > 0) { e.oy += e.hv; e.hv -= 0.3; if (e.oy <= 0) { e.oy = 0; e.hv = 0; } }
+    e.y = e.by - e.oy;
+    if (ov(P, e, 3)) { if (P.inv <= 0 && e.st === 2) { P.vx = e.dir * 5; } hurt(1, 'bar'); }
   },
   // Sam Altman: два токена по игроку и телепорт по платформе
   alt(e, dx, dy) {
@@ -751,9 +770,92 @@ const ENEMY = {
   },
 };
 
+// ---------- отрисовка мира (общая для игры и конструктора)
+// тайлы уровня (g — сетка H×W) в столбцах tx0..tx1; используется в игре и в конструкторе
+function drawTiles(g, Z, tx0, tx1) {
+  for (let ty = 0; ty < H; ty++) for (let tx = tx0; tx <= tx1; tx++) {
+    const c = g[ty][tx], x = tx * T, y = ty * T;
+    if (c === '#') {
+      ctx.fillStyle = Z.gBody; ctx.fillRect(x, y, T, T);
+      ctx.fillStyle = Z.gDark;
+      ctx.fillRect(x + Math.floor(hash(tx, ty) * 12), y + 5 + Math.floor(hash(ty, tx) * 8), 3, 2);
+      ctx.fillRect(x + Math.floor(hash(tx + 9, ty) * 12), y + 3 + Math.floor(hash(ty + 5, tx) * 10), 2, 2);
+      if (ty === 0 || g[ty - 1][tx] !== '#') { ctx.fillStyle = Z.gTop; ctx.fillRect(x, y, T, 4); ctx.fillRect(x + Math.floor(hash(tx, 3) * 10), y + 4, 3, 2); }
+    } else if (c === '=') {
+      ctx.fillStyle = Z.gDark; ctx.fillRect(x, y, T, T);
+      ctx.fillStyle = Z.gBody; ctx.fillRect(x + 1, y + 1, T - 2, T - 2);
+      ctx.fillStyle = Z.gTop; ctx.fillRect(x, y, T, 3);
+    } else if (c === '^') {
+      for (let i = 0; i < 2; i++) for (let k = 0; k < 4; k++) {
+        ctx.fillStyle = k < 1 ? '#fff' : '#b8b8c4'; ctx.fillRect(x + i * 8 + 3 - k, y + 8 + k * 2, 2 + k * 2, 2);
+      }
+    }
+  }
+}
+function drawPlat(pl, Z) {
+  ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(pl.x), pl.y, pl.w, pl.h);
+  ctx.fillStyle = Z.gTop; ctx.fillRect(Math.round(pl.x) + 1, pl.y + 1, pl.w - 2, 2);
+  ctx.fillStyle = Z.gDark; ctx.fillRect(Math.round(pl.x) + 1, pl.y + 3, pl.w - 2, 2);
+}
+// одна сущность (враг, флешка, мевли, портал) в её текущей позе
+function drawEnt(e) {
+  if (e.t === 'y') spr(IMG.yarosh, e.x, e.y - (e.anim ? 2 : 0), e.face < 0);
+  else if (e.t === 'd') {
+    spr(IMG.dynex, e.x, e.y + (e.warn > 0 ? 0 : Math.floor(frame / (e.ag ? 4 : 8)) % 2), e.dir < 0);
+    if (e.ag) text('!', e.x + 8, e.y - 11, '#ff3b3b', 8, 'center');
+  } else if (e.t === 'fat') spr(IMG.fat, e.x, e.y - (e.anim ? 1 : 0), false);
+  else if (e.t === 'ari') {
+    spr(IMG.ari, e.x + (e.st === 1 ? (frame % 4 < 2 ? -1 : 1) : 0), e.y + (e.st === 1 ? 4 : 0), false);
+    if (e.st === 1) text('!', e.x + 8, e.y - 11, '#ff3b3b', 8, 'center');
+  } else if (e.t === 'bar') {
+    const w = e.st === 1 || e.st === 4;
+    spr(IMG.bar, e.x + (w ? (frame % 4 < 2 ? -1 : 1) : 0), e.y + (w ? 2 : 0), e.dir > 0);
+    if (w) text(e.st === 4 ? '!!' : '!', e.x + 11, e.y - 11, '#ff3b3b', 8, 'center');
+  } else if (e.t === 'alt') spr(IMG.alt, e.x, e.y, e.face < 0);
+  else if (e.t === 'poc') {
+    spr(IMG.poc, e.x, e.y - (e.anim ? 1 : 0), e.face < 0);
+    if (e.st === 2) spr(IMG.stump, e.x + 8 - 9, e.y - 19 + (frame % 4 < 2 ? 0 : 1), false);   // замах пнём
+  }
+  else if (e.t === 'mak') {
+    const w = e.st === 1;
+    spr(IMG.mak, e.x + (w ? (frame % 4 < 2 ? -1 : 1) : 0), e.y - (e.anim ? 1 : 0), false);
+    if (w) for (let i = 0; i < 8; i++) {   // души слетаются к нему
+      const a = frame * 0.18 + i * Math.PI / 4, r = 8 + 36 * (e.tm / 55);
+      ctx.fillStyle = i % 2 ? '#ff3b2a' : '#ffb03a'; ctx.fillRect(Math.round(e.x + 8 + Math.cos(a) * r), Math.round(e.y + 11 + Math.sin(a) * r), 3, 3);
+    }
+  }
+  else if (e.t === 'ros') {
+    spr(IMG.ros, e.x, e.y + (e.air ? -1 : 0), e.dir < 0);
+  }
+  else if (e.t === 'mk') spr(IMG.mak, e.x + (frame % 6 < 3 ? 0 : 1), e.y, e.face < 0);
+  else if (e.t === 'laa') spr(IMG.laa, e.x, e.y - (e.anim ? 1 : 0), e.face < 0);
+  else if (e.t === 'vlad') spr(IMG.vlad, e.x, e.y + (e.n > 0 && frame % 8 < 4 ? -1 : 0), e.face < 0);
+  else if (e.t === 'tel') {
+    spr(IMG.tel, e.x, e.y, false);
+    if (e.ag && frame % 16 < 8) { ctx.fillStyle = '#ffd23e'; for (const o of [-1, 1]) { ctx.fillRect(e.x + 5 + o * 9, e.y + 2, 1, 3); ctx.fillRect(e.x + 5 + o * 12, e.y + 4, 1, 3); ctx.fillRect(e.x + 5 + o * 9, e.y + 7, 1, 3); } }
+  } else if (e.t === 'ban') {
+    if (e.st === 1 || e.st === 2) { ctx.fillStyle = e.st === 2 && frame % 6 < 3 ? '#ff3b3bcc' : '#ff3b3b44'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy) + 12, 24, e.gy - e.hy - 12); }
+    ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(e.hx) + 9, -20, 6, Math.round(e.hy) + 20);
+    ctx.fillStyle = '#8a5a2c'; ctx.fillRect(Math.round(e.hx) + 10, -20, 4, Math.round(e.hy) + 20);
+    ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(e.hx) - 1, Math.round(e.hy) - 1, 26, 14);
+    ctx.fillStyle = '#e03030'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy), 24, 12);
+    ctx.fillStyle = '#ff8a7a'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy), 24, 2);
+    text('БАН', Math.round(e.hx) + 12, Math.round(e.hy) + 3, '#fff', 6, 'center');
+  } else if (e.t === 'ano') {
+    for (let i = 0; i < 3; i++) spr(IMG.ano, e.x + i * 14, e.y, false);
+  } else if (e.t === 'duo') {
+    spr(IMG.navy, e.ax, e.gy - 18, false); spr(IMG.putin, e.bx, e.gy - 18, false);
+  } else if (e.t === 'f') spr(IMG.flash, e.x, e.y + Math.sin(frame * 0.1) * 2);
+  else if (e.t === 'm') spr(IMG.melvi, e.x, e.y, P && P.x < e.x);
+  else if (e.t === 'g') {
+    for (let i = 0; i < 4; i++) { ctx.fillStyle = ['#7a3cff', '#19ff9c', '#ff4fd8', '#ffffff'][(i + Math.floor(frame / 6)) % 4]; ctx.fillRect(e.x + i * 2, e.y + i * 3, 16 - i * 4, 26 - i * 6); }
+  }
+}
+
 // ---------- игровая сцена
 const playScene = {
   update() {
+    if (L.custom && L.custom.update()) return;   // свой уровень из конструктора: выход, таймер
     L.t++;
     for (const pl of L.plats) { pl.x += pl.vx; if (pl.x < pl.a) { pl.x = pl.a; pl.vx = Math.abs(pl.vx); } if (pl.x > pl.b) { pl.x = pl.b; pl.vx = -Math.abs(pl.vx); } }
     if (P.on) { moveX(P, P.on.vx); P.on = null; }
@@ -823,7 +925,7 @@ const playScene = {
       } else if (e.t === 'm') {
         if (Math.abs(dx) < 60 && Math.abs(dy) < 48) L.say = e.say;
       } else if (e.t === 'g') {
-        if (ov(P, e, 2)) { sfx(500, 0.4, 'triangle', 900); advance(L.n + 1); return; }
+        if (ov(P, e, 2)) { sfx(500, 0.4, 'triangle', 900); if (L.custom) L.custom.win(); else advance(L.n + 1); return; }
       }
       if (scene !== playScene) return;
     }
@@ -842,6 +944,12 @@ const playScene = {
         s.x += s.vx; s.y += s.vy;
         if (ov(P, s)) hurt(1, 'req');
         return s.t < 76;
+      }
+      if (s.k === 'quake') {   // ударная волна Баратрума: катится по земле только в пределах его дорожки
+        s.x += s.vx;
+        if (ov(P, s, 1)) hurt(1, 'bar');
+        if (frame % 3 === 0) parts.push({ x: s.x + 5, y: s.y + 6, vx: 0, vy: -0.8, life: 12, col: '#cfeeff' });
+        return s.x > s.x0 && s.x + s.w < s.x1;
       }
       if (s.k === 'flag') { s.t++; s.y += Math.sin(s.t * 0.25) * 0.7; }   // флаг «трепещет»
       if (s.k === 'uwu' && ++s.t % 5 === 0) parts.push({ x: s.x + 8, y: s.y + 2, vx: 0, vy: -0.4, life: 18, col: '#ff7aa8' });
@@ -869,88 +977,13 @@ const playScene = {
     drawBG(L.zone, L.cam);
     ctx.save();
     ctx.translate(-cam + (shake ? Math.round((Math.random() - 0.5) * shake) : 0), 4);
-    // тайлы
     const tx0 = Math.max(0, Math.floor(cam / T)), tx1 = Math.min(L.W - 1, tx0 + 21);
-    for (let ty = 0; ty < H; ty++) for (let tx = tx0; tx <= tx1; tx++) {
-      const c = L.g[ty][tx], x = tx * T, y = ty * T;
-      if (c === '#') {
-        ctx.fillStyle = Z.gBody; ctx.fillRect(x, y, T, T);
-        ctx.fillStyle = Z.gDark;
-        ctx.fillRect(x + Math.floor(hash(tx, ty) * 12), y + 5 + Math.floor(hash(ty, tx) * 8), 3, 2);
-        ctx.fillRect(x + Math.floor(hash(tx + 9, ty) * 12), y + 3 + Math.floor(hash(ty + 5, tx) * 10), 2, 2);
-        if (ty === 0 || L.g[ty - 1][tx] !== '#') { ctx.fillStyle = Z.gTop; ctx.fillRect(x, y, T, 4); ctx.fillRect(x + Math.floor(hash(tx, 3) * 10), y + 4, 3, 2); }
-      } else if (c === '=') {
-        ctx.fillStyle = Z.gDark; ctx.fillRect(x, y, T, T);
-        ctx.fillStyle = Z.gBody; ctx.fillRect(x + 1, y + 1, T - 2, T - 2);
-        ctx.fillStyle = Z.gTop; ctx.fillRect(x, y, T, 3);
-      } else if (c === '^') {
-        for (let i = 0; i < 2; i++) for (let k = 0; k < 4; k++) {
-          ctx.fillStyle = k < 1 ? '#fff' : '#b8b8c4'; ctx.fillRect(x + i * 8 + 3 - k, y + 8 + k * 2, 2 + k * 2, 2);
-        }
-      }
-    }
+    drawTiles(L.g, Z, tx0, tx1);
     if (L.secret) for (let i = 0; i < 6; i++) {
       if ((frame + i * 13) % 50 < 25) { ctx.fillStyle = '#fff'; ctx.fillRect(L.secret.x0 + 4 + hash(i, 7) * 40, 150 + hash(i, 8) * 24, 1, 1); }
     }
-    for (const pl of L.plats) {
-      ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(pl.x), pl.y, pl.w, pl.h);
-      ctx.fillStyle = Z.gTop; ctx.fillRect(Math.round(pl.x) + 1, pl.y + 1, pl.w - 2, 2);
-      ctx.fillStyle = Z.gDark; ctx.fillRect(Math.round(pl.x) + 1, pl.y + 3, pl.w - 2, 2);
-    }
-    // сущности
-    for (const e of L.ents) {
-      if (e.dead) continue;
-      if (e.t === 'y') spr(IMG.yarosh, e.x, e.y - (e.anim ? 2 : 0), e.face < 0);
-      else if (e.t === 'd') {
-        spr(IMG.dynex, e.x, e.y + (e.warn > 0 ? 0 : Math.floor(frame / (e.ag ? 4 : 8)) % 2), e.dir < 0);
-        if (e.ag) text('!', e.x + 8, e.y - 11, '#ff3b3b', 8, 'center');
-      } else if (e.t === 'fat') spr(IMG.fat, e.x, e.y - (e.anim ? 1 : 0), false);
-      else if (e.t === 'ari') {
-        spr(IMG.ari, e.x + (e.st === 1 ? (frame % 4 < 2 ? -1 : 1) : 0), e.y + (e.st === 1 ? 4 : 0), false);
-        if (e.st === 1) text('!', e.x + 8, e.y - 11, '#ff3b3b', 8, 'center');
-      } else if (e.t === 'bar') {
-        spr(IMG.bar, e.x + (e.st === 1 ? (frame % 4 < 2 ? -1 : 1) : 0), e.y + (e.st === 1 ? 2 : 0), e.dir > 0);
-        if (e.st === 1) text('!', e.x + 11, e.y - 11, '#ff3b3b', 8, 'center');
-      } else if (e.t === 'alt') spr(IMG.alt, e.x, e.y, e.face < 0);
-      else if (e.t === 'poc') {
-        spr(IMG.poc, e.x, e.y - (e.anim ? 1 : 0), e.face < 0);
-        if (e.st === 2) spr(IMG.stump, e.x + 8 - 9, e.y - 19 + (frame % 4 < 2 ? 0 : 1), false);   // замах пнём
-      }
-      else if (e.t === 'mak') {
-        const w = e.st === 1;
-        spr(IMG.mak, e.x + (w ? (frame % 4 < 2 ? -1 : 1) : 0), e.y - (e.anim ? 1 : 0), false);
-        if (w) for (let i = 0; i < 8; i++) {   // души слетаются к нему
-          const a = frame * 0.18 + i * Math.PI / 4, r = 8 + 36 * (e.tm / 55);
-          ctx.fillStyle = i % 2 ? '#ff3b2a' : '#ffb03a'; ctx.fillRect(Math.round(e.x + 8 + Math.cos(a) * r), Math.round(e.y + 11 + Math.sin(a) * r), 3, 3);
-        }
-      }
-      else if (e.t === 'ros') {
-        spr(IMG.ros, e.x, e.y + (e.air ? -1 : 0), e.dir < 0);
-      }
-      else if (e.t === 'mk') spr(IMG.mak, e.x + (frame % 6 < 3 ? 0 : 1), e.y, e.face < 0);
-      else if (e.t === 'laa') spr(IMG.laa, e.x, e.y - (e.anim ? 1 : 0), e.face < 0);
-      else if (e.t === 'vlad') spr(IMG.vlad, e.x, e.y + (e.n > 0 && frame % 8 < 4 ? -1 : 0), e.face < 0);
-      else if (e.t === 'tel') {
-        spr(IMG.tel, e.x, e.y, false);
-        if (e.ag && frame % 16 < 8) { ctx.fillStyle = '#ffd23e'; for (const o of [-1, 1]) { ctx.fillRect(e.x + 5 + o * 9, e.y + 2, 1, 3); ctx.fillRect(e.x + 5 + o * 12, e.y + 4, 1, 3); ctx.fillRect(e.x + 5 + o * 9, e.y + 7, 1, 3); } }
-      } else if (e.t === 'ban') {
-        if (e.st === 1 || e.st === 2) { ctx.fillStyle = e.st === 2 && frame % 6 < 3 ? '#ff3b3bcc' : '#ff3b3b44'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy) + 12, 24, e.gy - e.hy - 12); }
-        ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(e.hx) + 9, -20, 6, Math.round(e.hy) + 20);
-        ctx.fillStyle = '#8a5a2c'; ctx.fillRect(Math.round(e.hx) + 10, -20, 4, Math.round(e.hy) + 20);
-        ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(e.hx) - 1, Math.round(e.hy) - 1, 26, 14);
-        ctx.fillStyle = '#e03030'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy), 24, 12);
-        ctx.fillStyle = '#ff8a7a'; ctx.fillRect(Math.round(e.hx), Math.round(e.hy), 24, 2);
-        text('БАН', Math.round(e.hx) + 12, Math.round(e.hy) + 3, '#fff', 6, 'center');
-      } else if (e.t === 'ano') {
-        for (let i = 0; i < 3; i++) spr(IMG.ano, e.x + i * 14, e.y, false);
-      } else if (e.t === 'duo') {
-        spr(IMG.navy, e.ax, e.gy - 18, false); spr(IMG.putin, e.bx, e.gy - 18, false);
-      } else if (e.t === 'f') spr(IMG.flash, e.x, e.y + Math.sin(frame * 0.1) * 2);
-      else if (e.t === 'm') spr(IMG.melvi, e.x, e.y, P.x < e.x);
-      else if (e.t === 'g') {
-        for (let i = 0; i < 4; i++) { ctx.fillStyle = ['#7a3cff', '#19ff9c', '#ff4fd8', '#ffffff'][(i + Math.floor(frame / 6)) % 4]; ctx.fillRect(e.x + i * 2, e.y + i * 3, 16 - i * 4, 26 - i * 6); }
-      }
-    }
+    for (const pl of L.plats) drawPlat(pl, Z);
+    for (const e of L.ents) if (!e.dead) drawEnt(e);
     // реплики Почика
     for (const e of L.ents) {
       if (e.t !== 'poc' || !e.talk || e.st === 0) continue;
@@ -1005,6 +1038,7 @@ const playScene = {
       else if (s.k === 'flag') { ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, 14, 10); spr(IMG['flag' + s.f], s.x, s.y, s.vx < 0); }
       else if (s.k === 'glitch') { ctx.fillStyle = frame % 4 < 2 ? '#ff4fd8' : '#19ff9c'; ctx.fillRect(s.x, s.y, 6, 6); ctx.fillStyle = '#fff'; ctx.fillRect(s.x + 2, s.y + 2, 2, 2); }
       else if (s.k === 'sweep') { ctx.fillStyle = '#ff4fd8'; ctx.fillRect(s.x, s.y, 10, 10); ctx.fillStyle = '#19ff9c'; ctx.fillRect(s.x + 2, s.y + (frame % 6), 6, 2); }
+      else if (s.k === 'quake') { const f = frame % 6 < 3; ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(s.x) - 1, s.y + 1, 12, 8); ctx.fillStyle = '#cfeeff'; ctx.fillRect(Math.round(s.x), s.y + (f ? 2 : 3), 10, f ? 6 : 5); ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(s.x) + 3, s.y + (f ? 0 : 1), 4, 2); }
       else if (s.k === 'wave') { ctx.fillStyle = '#f7f1fa'; ctx.fillRect(s.x, s.y + 3, 10, 6); ctx.fillRect(s.x + 3, s.y, 4, 3); }
       else if (s.k === 'crystal') { ctx.fillStyle = '#f7f1fa'; ctx.fillRect(s.x + 1, s.y, 5, 8); ctx.fillStyle = '#ffb8d8'; ctx.fillRect(s.x + 2, s.y + 8, 3, 2); ctx.fillRect(s.x + 3, s.y + 10, 1, 1); }
     }
@@ -1020,12 +1054,13 @@ const playScene = {
       box(214, 14, 100, 5, '#2b2a33', '#000');
       if (b.kind === 'nos') { ctx.fillStyle = '#f08a1c'; ctx.fillRect(214, 14, 100 * Math.max(0, b.hp) / b.max, 5); }
       else { ctx.fillStyle = '#e03030'; ctx.fillRect(214, 14, 100, 5); text('HP: ∞', 314, 22, '#ff9a9a', 6, 'right'); }
-    } else text(`УР.${L.n} ${Z.name}`, 314, 6, '#fff', 6, 'right');
+    } else if (!L.custom) text(`УР.${L.n} ${Z.name}`, 314, 6, '#fff', 6, 'right');
     if (L.say) {
       box(8, 22, 304, 44, '#17161cee', '#fff');
       text(MELVI + ':', 13, 26, '#19ff9c', 6);
       wrap(L.say, 292, 6).slice(0, 4).forEach((l, i) => text(l, 13, 35 + i * 8, '#fff', 6));
     } else if (L.banner) text(L.banner[0], 160, 34, '#fff', 8, 'center');
+    if (L.custom) L.custom.draw();
   },
 };
 
@@ -1196,12 +1231,14 @@ function captchaScene() {
 function titleScene() {
   const saved = load();
   const bNew = { x: 90, y: saved > 1 ? 118 : 104, w: 140, h: 18 }, bCont = { x: 90, y: 94, w: 140, h: 18 };
+  const bEd = { x: 90, y: bNew.y + 24, w: 140, h: 18 };
   let t = 0;
   return {
     update() {
       t++;
+      if (t >= 15 && codes.has('KeyE')) { scene = makerMenuScene(); return; }
       if (!anyPressed || t < 15) return;
-      if (click) { if (inside(click, bNew)) gotoLevel(1); else if (saved > 1 && inside(click, bCont)) gotoLevel(saved); }
+      if (click) { if (inside(click, bNew)) gotoLevel(1); else if (saved > 1 && inside(click, bCont)) gotoLevel(saved); else if (inside(click, bEd)) scene = makerMenuScene(); }
       else gotoLevel(saved > 1 ? saved : 1);
     },
     draw() {
@@ -1213,7 +1250,9 @@ function titleScene() {
       if (saved > 1) { box(bCont.x, bCont.y, bCont.w, bCont.h, '#19ff9c', '#fff'); text(`ПРОДОЛЖИТЬ: УР.${saved}`, 160, bCont.y + 6, '#17161c', 6, 'center'); }
       box(bNew.x, bNew.y, bNew.w, bNew.h, saved > 1 ? '#2b2a33' : '#19ff9c', '#fff');
       text('НОВАЯ ИГРА', 160, bNew.y + 6, saved > 1 ? '#fff' : '#17161c', 6, 'center');
-      text('← → БЕЖАТЬ   ↑ / ПРОБЕЛ ПРЫЖОК', 160, 160, '#9a9aa6', 6, 'center');
+      box(bEd.x, bEd.y, bEd.w, bEd.h, '#2b2a33', '#ffd23e');
+      text('КОНСТРУКТОР (E)', 160, bEd.y + 6, '#ffd23e', 6, 'center');
+      text('← → БЕЖАТЬ   ↑ / ПРОБЕЛ ПРЫЖОК', 160, 168, '#9a9aa6', 6, 'center');
     },
   };
 }
