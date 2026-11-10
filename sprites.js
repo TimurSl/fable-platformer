@@ -7,6 +7,7 @@ const PAL = {
   h: '#b3263a', V: '#7b4fc4', Y: '#d29a3a', u: '#4650b8', N: '#3a2214',
   i: '#e8a0a8', e: '#3a2a4a', a: '#a9a9c8', A: '#8585a6', q: '#7fe8ff', z: '#2c7be0', Z: '#1d4fa0',
   P: '#8a3fd0', U: '#2d3680', f: '#20a04a', F: '#8ee0a8',
+  T: '#6fd0e0', E: '#3a86a8', x: '#b8864f', X: '#8a5a2c', J: '#e8b070', j: '#c58a50',
 };
 
 const SPR = {
@@ -417,4 +418,144 @@ Object.assign(SPR, {
   ]),
 });
 
-if (typeof module !== 'undefined') module.exports = { PAL, SPR };
+// ---- Махито, Ростик, лааадно
+Object.assign(SPR, {
+  // Махито: бирюзовые длинные волосы, очки, шрамы-стежки на лице и шее, чёрная кофта
+  mak: mir([
+    '...kkkkk',
+    '..kTTTTT',
+    '.kTTTETT',
+    'kTTTTTTE',
+    'kTTEwwTT',
+    'kTEwwwww',
+    'kTEkkkkk',
+    'kTEkwkwk',
+    'kTEkkkkk',
+    'kTEwwdww',
+    'kTEwwwwd',
+    'kTTEwwww',
+    'kTTEwwkk',
+    'kTTEwwww',
+    '.kTTkwww',
+    '.kTTkdwd',
+    'kTTTkwww',
+    'kTTkmmmm',
+    'kTTkmmmm',
+    'kTTkmmmm',
+    'kTEkmmmm',
+    '.kTkmmmm',
+    '.kEkmmmm',
+    '..kkkkkk',
+  ]),
+  // Ростик: оранжевый помидор-тыква с огромными глазами и чёрный чертёнок за спиной
+  ros: mir([
+    '.......y',
+    '.......G',
+    '...kkkkk',
+    '.kkRRRRR',
+    'kRRRRRRR',
+    'kRwwwwRR',
+    'kwwkkwRR',
+    'kwwkkwRR',
+    'kRwwwwRR',
+    'kRRRRRRR',
+    'kRRRRkkk',
+    'kRRRRkpp',
+    'kRRRRRkk',
+    '.kRRRRRR',
+    '..kkkkkk',
+  ]).map((r, i) => r + [
+    '..k..k',
+    '.kk.kk',
+    'kkkkkk',
+    'kokkok',
+    'kkkkkk',
+    '.kkkk.',
+    '.kkkkk',
+    '..kkkk',
+    '.kkkkk',
+    '.kkkk.',
+    '..kkk.',
+    '..kk..',
+    '..kk..',
+    '.kkkk.',
+    '......',
+  ][i]),
+  // лааадно: русая девчонка с заколкой, зубастая улыбка, палец во рту
+  laa: mir([
+    '..kkkkkk',
+    '.kxxxxxx',
+    'kxxxxxxx',
+    'kxxyxxxx',
+    'kxxxxxxX',
+    'kxxssxxx',
+    'kxssssss',
+    'kxsnnsss',
+    'kxsnnsss',
+    'kxsnnsss',
+    'kxsspsss',
+    'kxsssskk',
+    '.kxssskw',
+    '..kkssss',
+    '.kmmwwww',
+    'kmmmmwww',
+    'kmmmmmww',
+    '.kkkkkkk',
+  ]),
+});
+
+// ---- Влад и его флаги случайных стран (12×8; FLAG_NAMES — как страна называется по-русски)
+Object.assign(SPR, {
+  // Влад: длинные рыжеватые волосы, белые прищуренные глаза, широкая улыбка, красная куртка и бантик
+  vlad: mir([
+    '...kkkkk',
+    '..kJJJJJ',
+    '.kJJJJJJ',
+    'kJJJJJJj',
+    'kJJjJJJJ',
+    'kJjsssss',
+    'kJskwwwk',
+    'kJsskkkk',
+    'kJpsssss',
+    'kJsspsss',
+    'kJskkkkk',
+    'kJskpppp',
+    'kJsskppp',
+    '.kJskkkk',
+    '..kkssss',
+    '.kwwwwkk',
+    'kJhhwwwk',
+    'kJhhhwwk',
+    'kJhhhhwk',
+    'kJhhhhhk',
+    'kjhhhhhh',
+    '.kkkkkkk',
+  ]),
+});
+const fH = (cols, w = 12, h = 8) => Array.from({ length: h }, (_, y) => cols[Math.floor(y * cols.length / h)].repeat(w));
+const fV = (cols, w = 12, h = 8) => Array.from({ length: h }, () => cols.map((c, i) => c.repeat(Math.floor((i + 1) * w / cols.length) - Math.floor(i * w / cols.length))).join(''));
+const fPut = (rows, x, y, str) => rows.map((r, i) => i === y ? r.slice(0, x) + str + r.slice(x + str.length) : r);
+const FLAGS = [
+  ['РОССИЯ', fH(['w', 'u', 'r'])],
+  ['УКРАИНА', fH(['u', 'y'])],
+  ['ГЕРМАНИЯ', fH(['k', 'r', 'y'])],
+  ['ФРАНЦИЯ', fV(['u', 'w', 'r'])],
+  ['ИТАЛИЯ', fV(['G', 'w', 'r'])],
+  ['ПОЛЬША', fH(['w', 'r'])],
+  ['НИДЕРЛАНДЫ', fH(['r', 'w', 'u'])],
+  ['ВЕНГРИЯ', fH(['r', 'w', 'G'])],
+  ['ИРЛАНДИЯ', fV(['G', 'w', 'o'])],
+  ['АВСТРИЯ', fH(['r', 'w', 'r'])],
+  ['ЯПОНИЯ', (() => { let r = fH(['w']); r = fPut(r, 4, 2, 'rrrr'); r = fPut(r, 3, 3, 'rrrrrr'); r = fPut(r, 3, 4, 'rrrrrr'); return fPut(r, 4, 5, 'rrrr'); })()],
+  ['ШВЕЦИЯ', (() => { let r = fH(['u']); r = r.map((row, y) => row.slice(0, 3) + 'y' + row.slice(4)); return fH(['u']).map((row, y) => y === 3 || y === 4 ? 'y'.repeat(12) : row.slice(0, 3) + 'y' + row.slice(4)); })()],
+  ['ИЗРАИЛЬ', fH(['w', 'u', 'w', 'w', 'w', 'w', 'u', 'w']).map((row, y) => y === 3 || y === 4 ? row.slice(0, 5) + 'uu' + row.slice(7) : row)],
+  ['США', (() => { let r = fH(['r', 'w', 'r', 'w', 'r', 'w', 'r', 'w']); for (let y = 0; y < 4; y++) r = fPut(r, 0, y, 'uuuuu'); return r; })()],
+  ['БРАЗИЛИЯ', (() => { let r = fH(['G']); r = fPut(r, 5, 1, 'yy'); r = fPut(r, 3, 2, 'yyyyyy'); r = fPut(r, 2, 3, 'yyuuuuyy'.slice(0, 8)); r = fPut(r, 2, 4, 'yyuuuuyy'); r = fPut(r, 3, 5, 'yyyyyy'); return fPut(r, 5, 6, 'yy'); })()],
+  ['ТУРЦИЯ', (() => { let r = fH(['r']); r = fPut(r, 3, 2, 'www'); r = fPut(r, 2, 3, 'wwr'); r = fPut(r, 2, 4, 'wwr'); return fPut(r, 3, 5, 'www'); })()],
+  ['АРГЕНТИНА', fH(['b', 'w', 'b'])],
+  ['ГРЕЦИЯ', fH(['u', 'w', 'u', 'w', 'u', 'w', 'u', 'w']).map((row, y) => y < 4 ? 'uuuuu' + row.slice(5) : row)],
+];
+const FLAG_NAMES = FLAGS.map(f => f[0]);
+FLAGS.forEach((f, i) => { SPR['flag' + i] = f[1]; });
+
+if (typeof module !== 'undefined') module.exports = { PAL, SPR, FLAG_NAMES };
