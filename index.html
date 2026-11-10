@@ -16,6 +16,9 @@
   #pad{display:none;position:fixed;left:0;right:0;bottom:max(14px,env(safe-area-inset-bottom));
     padding:0 14px;justify-content:space-between;pointer-events:none}
   #pad.on{display:flex}
+  #pad[data-mode="none"]{display:none}
+  #pad button.dn{display:none}
+  #pad[data-mode="swim"] button.dn{display:block}
   #pad div{display:flex;gap:12px}
   #pad button{pointer-events:auto;width:72px;height:72px;border-radius:14px;border:3px solid #fff8;
     background:#ffffff22;color:#fff;font:28px monospace;touch-action:none}
@@ -29,7 +32,7 @@
 <div class="fontload">Хх</div>
 <div id="pad">
   <div><button data-k="left">◀</button><button data-k="right">▶</button></div>
-  <div><button class="j" data-k="jump">▲</button></div>
+  <div><button class="dn" data-k="down">▼</button><button class="j" data-k="jump">▲</button></div>
 </div>
 <script src="sprites.js"></script>
 <script src="game.js"></script>
