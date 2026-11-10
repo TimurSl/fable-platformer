@@ -235,6 +235,9 @@ for (const n of ['fullscreenchange', 'webkitfullscreenchange']) document.addEven
 // Хардкор (HC): одно сердце, ни одной флешки, ни одного чекпоинта — упал в яму значит умер, смерть возвращает на 1 уровень,
 // прогресс обычной игры не трогается. Запоминается только рекорд (самый дальний уровень) и факт прохождения.
 let HC = false, CHEAT = false;   // CHEAT: уровень загружен кодом Konami — прогресс не сохраняется
+// «Липовый детский мёд»: порции в банке (3 — полная), найденной на уровне 6. Банка живёт ровно одну жизнь: смерть её разбивает,
+// а HONEY_LOST отправляет игрока за новой банкой на уровень 6 (см. respawn).
+let HONEY = 0, HONEY_LOST = false;
 const hcBest = () => { try { return clamp(parseInt(localStorage.getItem('holos_hc')) || 0, 0, LAST); } catch (e) { return 0; } };
 const hcDone = () => { try { return localStorage.getItem('holos_hc_win') === '1'; } catch (e) { return false; } };
 function save(n) {
@@ -254,7 +257,8 @@ const ZONES = [
   { name: 'ЗАКУЛИСЬЕ', sky: ['#1a1412', '#3b2c24'], gTop: '#d2a974', gBody: '#6b4a30', gDark: '#4a3220' },
 ];
 // 1–3 Одесса, 4–6 Газа, 7–9 Израиль, 10 Синагога, 11–14 серверы Valve, 15–19 закулисье, 20 мета-пространство
-const zoneOf = n => n === SALT ? 4 : n <= 3 ? 0 : n <= 6 ? 1 : n <= 9 ? 2 : n === 10 ? 5 : n <= 14 ? 6 : n <= 19 ? 7 : 3;
+// 101–103 соляная жила, 104–106 Мёртвое море и Учебка Моссада, 107–108 «Безмятежность» (XP), 109 синий экран, 110 рабочий стол Гейтса
+const zoneOf = n => n > 100 ? (n <= 103 ? 8 : n <= 106 ? 9 : n <= 108 ? 10 : n === 109 ? 11 : 12) : n === SALT ? 4 : n <= 3 ? 0 : n <= 6 ? 1 : n <= 9 ? 2 : n === 10 ? 5 : n <= 14 ? 6 : n <= 19 ? 7 : 3;
 const MELVI = 'мевли';
 const INTRO = {
   1: ['ПРЕДЫСТОРИЯ\n\nМрДрНос случайно запушил новую обнову для ВОТВ прямо в ядро Линукс. У всех, кто скачал ядро 8-й версии, Линукс сломался.',
@@ -280,7 +284,7 @@ const END_TEXT = ['Нос повержен.\n\nХолос узнаёт всю п
 let frame = 0, scene = null, L = null, P = null, shots = [], parts = [], safe = null, shake = 0;
 
 // ---------- построение уровней
-const SIZES = { y: [14, 16], y2: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26],
+const SIZES = { hj: [9, 11], y: [14, 16], y2: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26],
   fat: [16, 18], ari: [16, 18], bar: [22, 20], alt: [14, 18], poc: [16, 20], tel: [10, 12], ban: [24, 12], ano: [40, 16], duo: [12, 18],
   mak: [16, 24], mk: [16, 24], pol: [12, 18], ros: [22, 15], laa: [16, 18], vlad: [16, 22] };
 // имена над особыми врагами (показываются по-русски); телефонных мошенников больше нет — теперь это Шайтаны
@@ -308,7 +312,7 @@ function buildLevel(n) {
   const W = 80 + dn * 9;
   const g = [...Array(H)].map(() => Array(W).fill('.'));
   const ents = [], plats = [];
-  let secret = null, gh = 3, x = 0, sinceFlash = 0, secretDone = false, spCount = 0;
+  let secret = null, twinkle = null, gh = 3, x = 0, sinceFlash = 0, secretDone = false, spCount = 0, honeyDone = false;
   const col = (cx, h) => { for (let y = H - h; y < H; y++) g[y][cx] = '#'; };
   const flat = len => { for (let i = 0; i < len && x < W; i++) col(x++, gh); };
   const top = () => (H - gh) * T;
@@ -352,6 +356,14 @@ function buildLevel(n) {
     const r = R() * tot, x0 = x;
     // особый враг «по расписанию»: если отстаём с показом новых врагов, ставим принудительно
     const due = pool.length && spCount < pool.length && x > W * (0.2 + 0.55 * spCount / pool.length);
+    // уровень 6: яма с тайным уступом. Под ней, в 2 клетках от края, спрятана банка «липового детского мёда» (мерцает так же, как вход на уровне 8)
+    if (n === 6 && !honeyDone && x > W * 0.5) {
+      gh = 3; flat(5);   // ровно 3: с уступа (на 2 клетки ниже земли) нужно уметь выпрыгнуть обратно
+      const gs = x; x += 4; twinkle = { x0: gs * T, x1: x * T };
+      g[H - 1][gs + 1] = '='; g[H - 1][gs + 2] = '=';   // уступ в нижнем ряду: падение сюда не смертельно
+      if (!HONEY) ents.push(ent('hj', gs * T + 23, (H - 1) * T - 11));
+      flat(4); honeyDone = true; continue;
+    }
     if (n === 8 && !secretDone && x > W * 0.55) {
       flat(5);
       ents.push(ent('m', (x - 4) * T, top() - 18, { say: 'Псс. Чуешь? Солью тянет... вон из той ямы. Я бы туда не прыгал. Или прыгал.' }));
@@ -397,9 +409,10 @@ function buildLevel(n) {
   if (n === 14) ents.push(ent('m', (W - 8) * T, top() - 18, { say: 'Серваки Valve позади. Дальше закулисье самой игры. На декорации не смотри, там всё нарисовано.' }));
   if (n === 19) ents.push(ent('m', (W - 8) * T, top() - 18, { say: 'Последний портал. За ним мета-пространство и Нос. Удачи, Холос. Одаа.' }));
   ents.push(ent('g', (W - 4) * T, top() - 26));
-  return { n, W, g, ents, plats, secret, zone: zoneOf(n), t: 0, cam: 0, cdBase: 120 - dn * 6, spawnY: (H - 3) * T - 14, banner: [`УРОВЕНЬ ${n}: ${ZONES[zoneOf(n)].name}`, 130], pops: [] };
+  return { n, W, g, ents, plats, secret, twinkle, zone: zoneOf(n), t: 0, cam: 0, cdBase: 120 - dn * 6, spawnY: (H - 3) * T - 14, banner: [`УРОВЕНЬ ${n}: ${ZONES[zoneOf(n)].name}`, 130], pops: [] };
 }
 function buildArena(n) {
+  if (n > 100) return BR.arena(n);
   const W = 20, g = [...Array(H)].map(() => Array(W).fill('.'));
   for (let x = 0; x < W; x++) { g[H - 1][x] = '#'; g[H - 2][x] = '#'; }
   const groundY = (H - 2) * T, py = 6 * T;
@@ -412,27 +425,39 @@ function buildArena(n) {
   } else {
     for (const x of [1, 2, 3, 4, 8, 9, 10, 11]) g[6][x] = '=';
     L.spots = [[40, py - 16], [152, py - 16], [100, groundY - 18], [12, groundY - 18]];
-    L.boss = { kind: 'bear', x: 232, y: groundY - 96, w: 80, h: 96, t: 0, hits: 0, cdW: 160, cdC: 100, cdF: 80, inhale: 0, lift: 0, say: 0 };
+    // с банкой мёда Бо можно победить: 6 здоровья, по 2 попадания за каждую из 3 порций (см. updBear). Без банки он по-прежнему неуязвим
+    L.boss = { kind: 'bear', x: 232, y: groundY - 96, w: 80, h: 96, t: 0, hits: 0, cdW: 160, cdC: 100, cdF: 80, inhale: 0, lift: 0, say: 0,
+      serv: HONEY, serv0: HONEY, hp: HONEY ? 6 : 0, max: 6, stuck: 0, sh: 0, dead: 0 };
     L.banner = ['СЕКРЕТНЫЙ БОСС: ВЕДМЕДИК БО', 170];
   }
   return L;
 }
 function startLevel(n) {
   if (n <= LAST && !CHEAT) save(n);
-  L = n === LAST || n === SALT ? buildArena(n) : buildLevel(n);
-  const hp = HC ? 1 : 3;
+  if (n > 100 && !CHEAT) BR.save(n);
+  L = n === LAST || n === SALT || n > 108 && n !== 109 ? buildArena(n) : n > 100 ? BR.build(n) : buildLevel(n);
+  const hp = HC ? 1 : n > 100 ? 2 : 3;
   P = { x: 24, y: L.spawnY, w: 8, h: 13, vx: 0, vy: 0, hp, max: hp, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null, stop: 0, bash: 0, grace: 0 };
   safe = { x: P.x, y: P.y }; shots = []; parts = []; shake = 0;
+  if (L.br && L.br.init) L.br.init();
   scene = playScene;
 }
-// после смерти: обычная игра — тот же уровень заново, хардкор — весь забег с первого уровня
-const respawn = n => startLevel(HC ? 1 : n);
+// после смерти: обычная игра — тот же уровень заново, хардкор — весь забег с первого уровня. Банка мёда разбилась —
+// назад на уровень 6 за новой. Липовая ветка: свои правила (ключи, возврат на 1 уровень ветки), см. BR.respawn
+function respawn(n) {
+  if (n > 100) return BR.respawn(n);
+  if (HC) { HONEY = 0; HONEY_LOST = false; return startLevel(1); }
+  if (HONEY_LOST) { HONEY_LOST = false; return startLevel(6); }
+  startLevel(n);
+}
 function gotoLevel(n) {
+  if (n > 100) return BR.go(n, true);
   if (INTRO[n]) scene = cardScene(INTRO[n], () => startLevel(n), zoneOf(n)); else startLevel(n);
 }
 // переход на следующий уровень после портала: между 3 и 4, 6 и 7 — мини-игры
 const MINI = { 4: swimScene, 7: passportScene };
 function advance(n) {
+  if (n > 100) return BR.advance(n);
   if (MINI[n]) scene = cardScene(MINI_INTRO[n], () => { scene = MINI[n](() => gotoLevel(n)); }, n === 4 ? 0 : 2);
   else gotoLevel(n);
 }
@@ -441,7 +466,7 @@ function advance(n) {
 function solid(tx, ty) {
   if (tx < 0 || tx >= L.W) return true;
   if (ty < 0 || ty >= H) return false;
-  const c = L.g[ty][tx]; return c === '#' || c === '=';
+  const c = L.g[ty][tx]; return c === '#' || c === '=' || c === 's';   // s — крошащаяся соль (см. branch.js)
 }
 const tileAt = (px, py) => solid(Math.floor(px / T), Math.floor(py / T));
 function collides(o) {
@@ -483,16 +508,32 @@ function bash() {
 function die(c) {
   if (scene !== playScene) return;
   sfx(300, 0.5, 'sawtooth', -260, 0.08);
-  scene = L.custom ? L.custom.die(c) : L.n === SALT ? crystalScene() : deathScene(L.n, c);
+  if (!L.custom) {   // банка разбилась: смерть в шахте возвращает сохранение на уровень 6 (за новой банкой)
+    if (L.n === SALT) { if (L.boss && L.boss.serv0 && !CHEAT && !HC) save(6); HONEY = 0; }
+    else if (HONEY) { HONEY_LOST = true; HONEY = 0; }
+  }
+  scene = L.custom ? L.custom.die(c) : L.n > 100 ? BR.death(L.n, c) : L.n === SALT ? crystalScene() : deathScene(L.n, c);
 }
 function onFlash(e) {
   sfx(900, 0.12, 'square', 600);
-  if (L.boss) shots.push({ k: 'usb', x: e.x, y: e.y, sx: e.x, sy: e.y, t: 0, w: 8, h: 12, vx: 0, vy: 0 });
+  if (L.boss) shots.push({ k: 'usb', x: e.x, y: e.y, sx: e.x, sy: e.y, t: 0, w: 8, h: 12, vx: 0, vy: 0, n: L.boss.kind === 'gates' ? BR.flightTime(e) : 18, max: L.boss.kind === 'gates' ? BR.MAXF : 0 });
   else { P.hp = Math.min(P.max, P.hp + 1); burst(e.x + 4, e.y + 6, '#2ecc71', 10); L.pops.push({ x: e.x - 4, y: e.y - 8, s: '+1', t: 40 }); }
 }
-function hitBoss() {
+function hitBoss(shot) {
   const b = L.boss;
-  if (b.kind === 'bear') { b.hits++; b.say = 100; L.pops.push({ x: b.x + 20, y: b.y + 10, s: '0', t: 50 }); sfx(110, 0.25, 'sawtooth'); return; }
+  if (b.kind === 'gates') return BR.hitGates(b, shot);
+  if (b.kind === 'bear') {
+    if (b.dead) return;
+    // пока Бо не проглотил порцию мёда, нос под защитой: попадания «0» только раздражают его (5 штук — и он делает вдох)
+    if (!b.stuck) { b.hits++; b.say = 100; L.pops.push({ x: b.x + 20, y: b.y + 10, s: '0', t: 50 }); sfx(110, 0.25, 'sawtooth'); return; }
+    // пасть застряла: фиолетовый нос уязвим, но окно закрывается после второго попадания (третье уже не считается), так что три порции — ровно шесть ударов
+    if (b.sh >= 2) { L.pops.push({ x: b.x + 20, y: b.y + 10, s: '0', t: 50 }); return; }
+    b.hp--; b.sh++; b.flash = 14; shake = 7; b.say = 60; sfx(260, 0.3, 'sawtooth', -140, 0.09); burst(b.x + 40, b.y + 40, '#b06cff', 14);
+    L.pops.push({ x: b.x + 20, y: b.y + 10, s: '-1', t: 50 });
+    if (b.hp <= 0) { b.dead = 1; b.stuck = 0; shots = []; return; }
+    if (b.sh >= 2) b.stuck = Math.min(b.stuck, 24);
+    return;
+  }
   if (b.dead) return;
   b.hp--; b.flash = 14; shake = 5; sfx(220, 0.25, 'sawtooth', -120, 0.08); burst(b.x + b.w / 2, b.y + b.h / 2, '#19ff9c', 12);
   if (b.hp <= 0) { b.dead = 1; return; }
@@ -542,11 +583,37 @@ function updNos(b) {
 }
 function updBear(b) {
   b.t++;
+  if (b.flash) b.flash--;
+  if (b.dead) {   // Бо повержен: соляная стена за ним рушится
+    b.dead++; shots = []; shake = 6;
+    if (b.dead % 4 === 0) { burst(b.x + Math.random() * b.w, b.y + Math.random() * b.h, b.dead % 8 ? '#f7f1fa' : '#b06cff', 6); sfx(60 + Math.random() * 120, 0.12, 'sawtooth'); }
+    if (b.dead === 30) L.banner = ['ВЕДМЕДИК БО ПОВЕРЖЕН', 200];
+    if (b.dead > 170) { try { localStorage.setItem('holos_bo', '1'); } catch (e) { } scene = BR.cartScene(); }
+    return;
+  }
+  if (b.stuck) {   // пасть застряла после порции мёда: нос уязвим, флешки появляются быстро
+    if (--b.stuck <= 0) {   // окно закрылось: цикл начинается заново (если порций больше нет, следующий вдох уже смертелен)
+      b.stuck = 0; b.sh = 0; b.t = 0; b.hits = 0; b.cdW = 120; b.cdC = 80; L.banner = [b.serv ? 'БО ПРОГЛОТИЛ. ОСТАЛОСЬ ПОРЦИЙ: ' + b.serv : 'МЁД КОНЧИЛСЯ. ЭТО ПЛОХО.', 140];
+    }
+    if (P.x + P.w > b.x + 12) P.x = b.x + 12 - P.w;
+    if (ov(P, b, 10)) hurt(1, 'bear');
+    if (--b.cdC <= 0) { b.cdC = 70; shots.push({ k: 'crystal', x: clamp(P.x + Math.random() * 30 - 15, 4, 220), y: -12, vx: 0, vy: 2, g: 0.03, w: 7, h: 11 }); }
+    if (b.cdF > 25) b.cdF = 25;
+    spawnFlash(b);
+    return;
+  }
   if (!b.inhale && (b.t > 2400 || b.hits >= 5)) { b.inhale = 1; L.banner = ['ВЕДМЕДИК БО ДЕЛАЕТ ВДОХ', 240]; shots = []; sfx(60, 1.2, 'sawtooth', 200, 0.08); }
   if (b.inhale) {
     b.inhale++;
     moveX(P, Math.min(4.5, 0.6 + b.inhale * 0.025));
     if (frame % 3 === 0) parts.push({ x: Math.random() * 220, y: 30 + Math.random() * 110, vx: 4, vy: 0, life: 30, col: '#f7f1fa' });
+    if (b.serv && b.inhale === 75) {   // вместо Холоса Бо глотает порцию мёда из банки
+      b.serv--; HONEY = b.serv; b.stuck = 300; b.sh = 0; b.inhale = 0; b.hits = 0; b.cdF = 0;
+      for (let i = 0; i < 18; i++) parts.push({ x: P.x + 4, y: P.y + 4, vx: (b.x + 20 - P.x) / 22 + (Math.random() - 0.5), vy: (b.y + 56 - P.y) / 22 + (Math.random() - 0.5) - 1, life: 26, col: i % 2 ? '#ffd23e' : '#f08a1c' });
+      sfx(300, 0.5, 'triangle', -200, 0.08); sfx(90, 0.8, 'sawtooth', -30, 0.07); shake = 10;
+      L.banner = ['ПАСТЬ ЗАСТРЯЛА! БЕЙ В ФИОЛЕТОВЫЙ НОС', 150];
+      return;
+    }
     if (ov(P, b, 10)) die('bear');
     return;
   }
@@ -621,6 +688,12 @@ function copHit(s, i = 0) {
   for (const c of L.ents) if (c.t === 'pol' && !c.dead && ov(s, c, i)) { killCop(c); hit = true; }
   return hit;
 }
+const ENT_DRAW = {   // отрисовка особых сущностей: банка мёда (уровень 6) и всё из Липовой ветки (branch.js)
+  hj(e) {
+    spr(IMG.jar, e.x, e.y + Math.sin(frame * 0.1) * 1.5);
+    if (frame % 40 < 14) { ctx.fillStyle = '#fff'; ctx.fillRect(e.x + 1 + (frame >> 3) % 7, e.y - 2 + (frame >> 4) % 4, 1, 1); }
+  },
+};
 const ENEMY = {
   // DiabloFAT: веер из трёх огненных шаров
   fat(e, dx, dy) {
@@ -930,6 +1003,17 @@ function drawTiles(g, Z, tx0, tx1) {
       ctx.fillRect(x + Math.floor(hash(tx, ty) * 12), y + 5 + Math.floor(hash(ty, tx) * 8), 3, 2);
       ctx.fillRect(x + Math.floor(hash(tx + 9, ty) * 12), y + 3 + Math.floor(hash(ty + 5, tx) * 10), 2, 2);
       if (ty === 0 || g[ty - 1][tx] !== '#') { ctx.fillStyle = Z.gTop; ctx.fillRect(x, y, T, 4); ctx.fillRect(x + Math.floor(hash(tx, 3) * 10), y + 4, 3, 2); }
+    } else if (c === 's') {   // крошащаяся соль: светлый блок с трещинами; пока рушится — дрожит и темнеет
+      const k = L && L.br && L.br.crum && L.br.crum[tx + ',' + ty], sh = k ? (k % 4 < 2 ? 1 : -1) : 0;
+      ctx.fillStyle = k ? '#c9bcd6' : '#e9e2f2'; ctx.fillRect(x + sh, y, T, T);
+      ctx.fillStyle = '#9d92ad'; ctx.fillRect(x + sh, y + T - 3, T, 3); ctx.fillRect(x + sh + 3 + (tx * 5) % 6, y + 5, 1, 7); ctx.fillRect(x + sh + 4 + (tx * 5) % 6, y + 11, 3, 1);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(x + sh, y, T, 3); ctx.fillRect(x + sh + 2 + (ty * 3 + tx) % 9, y + 4, 2, 2);
+      if (k) { ctx.fillStyle = '#6d6280'; ctx.fillRect(x + sh + 6, y + 3, 1, 9); ctx.fillRect(x + sh + 7, y + 8, 4, 1); }
+    } else if (c === '=' && Z.bsod) {   // синий экран: твёрдые только строки текста — «блок» нарисован буквами
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(x, y + 3, T, 10);
+      ctx.fillStyle = '#0000a8';
+      for (let i = 0; i < 4; i++) if (hash(tx * 4 + i, ty + 31) > 0.3) ctx.fillRect(x + 1 + i * 4, y + 5, 2, 6);
+      if (hash(tx, ty + 77) > 0.5) { ctx.fillStyle = '#ffffff'; ctx.fillRect(x + 2 + Math.floor(hash(tx, 5) * 10), y + 7, 3, 2); }
     } else if (c === '=') {
       ctx.fillStyle = Z.gDark; ctx.fillRect(x, y, T, T);
       ctx.fillStyle = Z.gBody; ctx.fillRect(x + 1, y + 1, T - 2, T - 2);
@@ -942,6 +1026,7 @@ function drawTiles(g, Z, tx0, tx1) {
   }
 }
 function drawPlat(pl, Z) {
+  if (pl.win) return drawWinPlat(pl);
   ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(pl.x), pl.y, pl.w, pl.h);
   ctx.fillStyle = Z.gTop; ctx.fillRect(Math.round(pl.x) + 1, pl.y + 1, pl.w - 2, 2);
   ctx.fillStyle = Z.gDark; ctx.fillRect(Math.round(pl.x) + 1, pl.y + 3, pl.w - 2, 2);
@@ -1003,7 +1088,8 @@ function drawEnt(e) {
     spr(IMG.police, e.x, e.y - (run && Math.floor(frame / 3) % 2 ? 1 : 0), e.face < 0);
     ctx.fillStyle = frame % 10 < 5 ? '#ff3b3b' : '#4aa3ff'; ctx.fillRect(e.x + 5, e.y - 2, 2, 2);   // мигалка на фуражке
     ctx.fillStyle = '#17161c'; ctx.fillRect(e.face < 0 ? e.x - 2 : e.x + 12, e.y + 5 + (frame % 8 < 4 ? 0 : 1), 2, 8);   // дубинка
-  } else if (e.t === 'f') spr(IMG.flash, e.x, e.y + Math.sin(frame * 0.1) * 2);
+  } else if (ENT_DRAW[e.t]) ENT_DRAW[e.t](e);
+  else if (e.t === 'f') spr(IMG.flash, e.x, e.y + Math.sin(frame * 0.1) * 2);
   else if (e.t === 'm') spr(IMG.melvi, e.x, e.y, P && P.x < e.x);
   else if (e.t === 'g') {
     for (let i = 0; i < 4; i++) { ctx.fillStyle = ['#7a3cff', '#19ff9c', '#ff4fd8', '#ffffff'][(i + Math.floor(frame / 6)) % 4]; ctx.fillRect(e.x + i * 2, e.y + i * 3, 16 - i * 4, 26 - i * 6); }
@@ -1017,13 +1103,14 @@ const playScene = {
   update() {
     if (L.custom && L.custom.update()) return;   // свой уровень из конструктора: выход, таймер
     L.t++;
+    if (L.br && L.br.pre) L.br.pre();
     for (const pl of L.plats) { pl.x += pl.vx; if (pl.x < pl.a) { pl.x = pl.a; pl.vx = Math.abs(pl.vx); } if (pl.x > pl.b) { pl.x = pl.b; pl.vx = -Math.abs(pl.vx); } }
     if (P.on) { moveX(P, P.on.vx); P.on = null; }
     // игрок
     const held = P.stop > 0; if (held) { P.stop--; P.grace = 60; } else if (P.grace > 0) P.grace--;   // Почик остановил игрока: управление отключено
     const bashed = P.bash > 0; if (bashed) P.bash--;   // башу не мешает получать урон — в отличие от разговора с Почиком
     const frozen = held || bashed;
-    const ax = frozen ? 0 : keys.right - keys.left;
+    const ax = frozen ? 0 : (keys.right - keys.left) * (L.br && L.br.inv > 0 ? -1 : 1);   // Скрепыш «помог»: управление перевёрнуто
     P.vx += (ax * 2 - P.vx) * 0.3; if (Math.abs(P.vx) < 0.05) P.vx = 0;
     if (ax) P.face = ax;
     P.buf = jumpPressed && !frozen ? 7 : Math.max(0, P.buf - 1);
@@ -1036,9 +1123,12 @@ const playScene = {
     const oldBottom = P.y + P.h, vy0 = P.vy;
     moveY(P, P.vy);
     if (vy0 >= 0) for (const pl of L.plats) {
+      if (pl.closed) continue;   // окно закрылось (уровень 107)
       if (P.x + P.w > pl.x && P.x < pl.x + pl.w && oldBottom <= pl.y + 2 && P.y + P.h >= pl.y) { P.y = pl.y - P.h - 0.01; P.vy = 0; P.ground = true; P.on = pl; }
     }
     if (P.inv > 0) P.inv--;
+    if (L.br && L.br.post) L.br.post();
+    if (scene !== playScene) return;
     if (P.ground && !P.on && L.t % 8 === 0) safe = { x: P.x, y: P.y };
     // шипы
     for (let tx = Math.floor(P.x / T); tx <= Math.floor((P.x + P.w) / T); tx++) {
@@ -1048,6 +1138,7 @@ const playScene = {
     if (scene !== playScene) return;
     // падение
     if (P.y > H * T + 24) {
+      if (L.n > 100) { die('fall'); return; }   // Липовая ветка: яма — смерть
       if (L.secret && P.x + P.w > L.secret.x0 && P.x < L.secret.x1) { sfx(200, 0.6, 'triangle', 600); gotoLevel(SALT); return; }
       P.hp--; shake = 6;
       if (P.hp <= 0) { die('fall'); return; }
@@ -1083,6 +1174,8 @@ const playScene = {
         if (P.inv <= 0 && !P.stop && P.grace <= 0 && ov(P, e, 4)) { P.hp = 0; die('dynex'); return; }
       } else if (ENEMY[e.t]) {
         ENEMY[e.t](e, dx, dy);
+      } else if (e.t === 'hj') {   // банка «липового детского мёда»
+        if (ov(P, e, 1)) { e.dead = true; HONEY = 3; HONEY_LOST = false; sfx(500, 0.5, 'triangle', 700, 0.08); burst(e.x + 4, e.y + 4, '#ffd23e', 16); L.pops.push({ x: e.x - 16, y: e.y - 14, s: 'ЛИПОВЫЙ МЁД!', t: 70 }); L.banner = ['ЛИПОВЫЙ ДЕТСКИЙ МЁД: 3 ПОРЦИИ. НЕ РАЗБЕЙ.', 160]; }
       } else if (e.t === 'f') {
         if (ov(P, e)) { e.dead = true; onFlash(e); }
       } else if (e.t === 'm') {
@@ -1093,13 +1186,14 @@ const playScene = {
       if (scene !== playScene) return;
     }
     // босс
-    if (L.boss) { (L.boss.kind === 'nos' ? updNos : updBear)(L.boss); if (scene !== playScene) return; }
+    if (L.boss) { ({ nos: updNos, bear: updBear, gates: BR.updGates })[L.boss.kind](L.boss); if (scene !== playScene) return; }
+    if (L.br && L.br.update) { L.br.update(); if (scene !== playScene) return; }
     // снаряды
     shots = shots.filter(s => {
       if (s.k === 'usb') {
-        const b = L.boss, k = ++s.t / 18;
+        const b = L.boss, n = s.n || 18, k = ++s.t / n;   // n — время полёта (у Гейтса зависит от расстояния, а дольше s.max в воздухе он не терпит)
         s.x = s.sx + (b.x + b.w / 2 - s.sx) * k; s.y = s.sy + (b.y + b.h / 2 - s.sy) * k;
-        if (s.t >= 18) { hitBoss(); return false; }
+        if (s.t >= Math.min(n, s.max || 1e9)) { hitBoss(s); return false; }
         return true;
       }
       if (s.k === 'req') {   // линии душ: идут от Махито, на полпути разворачиваются; стены не держат
@@ -1154,10 +1248,12 @@ const playScene = {
     ctx.translate(-cam + (shake && SET.shake ? Math.round((Math.random() - 0.5) * shake) : 0), 4);
     const tx0 = Math.max(0, Math.floor(cam / T)), tx1 = Math.min(L.W - 1, tx0 + 21);
     drawTiles(L.g, Z, tx0, tx1);
-    if (L.secret) for (let i = 0; i < 6; i++) {
-      if ((frame + i * 13) % 50 < 25) { ctx.fillStyle = '#fff'; ctx.fillRect(L.secret.x0 + 4 + hash(i, 7) * 40, 150 + hash(i, 8) * 24, 1, 1); }
+    const tw = L.secret || L.twinkle;
+    if (tw) for (let i = 0; i < 6; i++) {
+      if ((frame + i * 13) % 50 < 25) { ctx.fillStyle = '#fff'; ctx.fillRect(tw.x0 + 4 + hash(i, 7) * 40, 150 + hash(i, 8) * 24, 1, 1); }
     }
-    for (const pl of L.plats) drawPlat(pl, Z);
+    if (L.br && L.br.drawBack) L.br.drawBack();
+    for (const pl of L.plats) { if (!pl.closed) drawPlat(pl, Z); }
     for (const e of L.ents) if (!e.dead) drawEnt(e);
     // реплики Почика
     for (const e of L.ents) {
@@ -1194,9 +1290,16 @@ const playScene = {
       if (b.warn && frame % 8 < 5) for (const sd of b.warn.both ? [-1, 1] : [b.warn.side]) text('!', sd < 0 ? 6 : VW - 6, L.groundY - 12, '#ff3b3b', 8, 'center');
     }
     if (b && b.kind === 'bear') {
-      spr(b.inhale ? IMG.bearOpen : IMG.bear, b.x + (b.inhale ? Math.sin(frame) : 0), b.y - (b.lift ? 6 : 0), false, 4);
-      if (b.say) text('ХА.', b.x + 10, b.y - 10, '#fff', 8);
+      if (!b.dead || b.dead % 4 < 2) {
+        if (b.flash % 4 > 1) ctx.globalAlpha = 0.45;
+        spr(b.inhale || b.stuck ? IMG.bearOpen : IMG.bear, b.x + (b.inhale ? Math.sin(frame) : b.dead ? (Math.random() - 0.5) * 4 : 0), b.y - (b.lift ? 6 : 0), false, 4);
+        ctx.globalAlpha = 1;
+        if (b.stuck && frame % 20 < 14) { ctx.fillStyle = '#ffd23e'; ctx.fillRect(Math.round(b.x + 40), Math.round(b.y + 44 + Math.sin(frame * 0.3) * 2), 3, 8); }   // липкий мёд в пасти
+        if (b.stuck) { ctx.fillStyle = frame % 12 < 6 ? '#ffffff' : '#ffd0ff'; ctx.fillRect(Math.round(b.x + 24), Math.round(b.y + 28), 32, 3); text('НОС', b.x + 40, b.y + 18, '#b06cff', 6, 'center'); }
+      }
+      if (b.say && !b.stuck) text('ХА.', b.x + 10, b.y - 10, '#fff', 8);
     }
+    if (b && b.kind === 'gates') BR.drawGates(b);
     // снаряды
     for (const s of shots) {
       if (s.k === 'b') { ctx.save(); ctx.translate(Math.round(s.x + 2), Math.round(s.y + 5)); ctx.rotate(s.rot); ctx.drawImage(IMG.bottle, -2, -5); ctx.restore(); }
@@ -1218,6 +1321,7 @@ const playScene = {
       else if (s.k === 'quake') { const f = frame % 6 < 3; ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(s.x) - 1, s.y + 1, 12, 8); ctx.fillStyle = '#cfeeff'; ctx.fillRect(Math.round(s.x), s.y + (f ? 2 : 3), 10, f ? 6 : 5); ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(s.x) + 3, s.y + (f ? 0 : 1), 4, 2); }
       else if (s.k === 'wave') { ctx.fillStyle = '#f7f1fa'; ctx.fillRect(s.x, s.y + 3, 10, 6); ctx.fillRect(s.x + 3, s.y, 4, 3); }
       else if (s.k === 'crystal') { ctx.fillStyle = '#f7f1fa'; ctx.fillRect(s.x + 1, s.y, 5, 8); ctx.fillStyle = '#ffb8d8'; ctx.fillRect(s.x + 2, s.y + 8, 3, 2); ctx.fillRect(s.x + 3, s.y + 10, 1, 1); }
+      else if (BR.drawShot) BR.drawShot(s);
     }
     // игрок
     if (P.inv % 6 < 3) spr(IMG.holos, P.x - 3, P.y - 3 + (P.ground && Math.abs(P.vx) > 0.5 ? Math.floor(frame / 5) % 2 : 0), P.face < 0);
@@ -1227,16 +1331,21 @@ const playScene = {
     }
     for (const p of parts) { ctx.fillStyle = p.col; ctx.fillRect(p.x, p.y, 2, 2); }
     for (const p of L.pops) text(p.s, p.x, p.y, '#fff', 8);
+    if (L.br && L.br.drawFront) L.br.drawFront();
     ctx.restore();
     // HUD
     for (let i = 0; i < P.max; i++) spr(i < P.hp ? IMG.heart : IMG.heartOff, 6 + i * 13, 6, false, 2);
     if (HC && !L.custom) text('ХАРДКОР', 22, 8, '#ff5a5a', 6);
-    if (b) {
+    if (HONEY && !L.custom && L.n < 100) { spr(IMG.jar, 6, 22); text('x' + HONEY, 18, 25, '#ffd23e', 6); }
+    if (L.br && L.br.hud) L.br.hud();
+    if (b && b.kind === 'gates') BR.hudGates(b);
+    else if (b) {
       text(b.kind === 'nos' ? 'МРДРНОС' : 'ВЕДМЕДИК БО', 314, 5, '#fff', 6, 'right');
       box(214, 14, 100, 5, '#2b2a33', '#000');
       if (b.kind === 'nos') { ctx.fillStyle = '#f08a1c'; ctx.fillRect(214, 14, 100 * Math.max(0, b.hp) / b.max, 5); }
+      else if (b.serv0) { ctx.fillStyle = '#e03030'; ctx.fillRect(214, 14, 100 * Math.max(0, b.hp) / b.max, 5); text('HP: ' + Math.max(0, b.hp) + '/' + b.max + '   МЁД: ' + b.serv, 314, 22, '#ffd23e', 6, 'right'); }
       else { ctx.fillStyle = '#e03030'; ctx.fillRect(214, 14, 100, 5); text('HP: ∞', 314, 22, '#ff9a9a', 6, 'right'); }
-    } else if (!L.custom) text(`УР.${L.n} ${Z.name}`, 314, 6, '#fff', 6, 'right');
+    } else if (!L.custom) text(L.n > 100 ? `ВЕТКА ${L.n - 100}/10 ${Z.name}` : `УР.${L.n} ${Z.name}`, 314, 6, '#fff', 6, 'right');
     if (L.say) {
       box(8, 22, 304, 44, '#17161cee', '#fff');
       text(MELVI + ':', 13, 26, '#19ff9c', 6);
@@ -1282,6 +1391,7 @@ function drawBG(z, cam) {
     }
   } else if (z === 5) bgSynagogue(cam);
   else if (z === 6) bgServers(cam);
+  else if (z >= 8) drawBgBranch(z, cam);
   else bgBackstage(cam);
 }
 
@@ -1468,7 +1578,7 @@ function settingsScene(back, bg) {
       { s: '← ЗВУКИ: ' + lvl(SET.sfx) + ' →', adj: k => { SET.sfx = clamp(SET.sfx + k, 0, 10); saveSet(); sfx(520, 0.1, 'square', 300, 0.05); } },
       { s: '← ТРЯСКА ЭКРАНА: ' + (SET.shake ? 'ВКЛ' : 'ВЫКЛ') + ' →', adj: () => { SET.shake = SET.shake ? 0 : 1; saveSet(); shake = 6; } },
       ...(fsReq ? [{ s: 'ПОЛНЫЙ ЭКРАН: ' + (fsOn() ? 'ВКЛ' : 'ВЫКЛ'), f: toggleFs }] : []),
-      { s: 'СБРОСИТЬ ПРОГРЕСС', sure: 'ТОЧНО? ВСЁ ПРОПАДЁТ', f: () => { try { for (const k of ['holos_lvl', 'holos_hc', 'holos_hc_win']) localStorage.removeItem(k); } catch (e) { } } },
+      { s: 'СБРОСИТЬ ПРОГРЕСС', sure: 'ТОЧНО? ВСЁ ПРОПАДЁТ', f: () => { try { for (const k of ['holos_lvl', 'holos_hc', 'holos_hc_win', 'holos_bo', 'holos_br', 'holos_brk', 'holos_br_win']) localStorage.removeItem(k); } catch (e) { } } },
       { s: 'НАЗАД', f: back },
     ],
   });
@@ -1499,18 +1609,23 @@ function pauseScene(prev) {
 }
 
 function titleScene() {
-  HC = false; CHEAT = false;
+  HC = false; CHEAT = false; HONEY = 0; HONEY_LOST = false;
   const saved = load(), best = hcBest();
   const items = [];
   if (saved > 1) items.push({ s: `ПРОДОЛЖИТЬ: УР.${saved}`, f: () => gotoLevel(saved) });
   items.push({ s: 'НОВАЯ ИГРА', f: () => gotoLevel(1) });
+  if (BR.unlocked()) {   // Бо побеждён: вход в Липовую ветку открыт
+    const bl = BR.load();
+    if (bl > 101) items.push({ s: `ВЕТКА: ПРОДОЛЖИТЬ УР.${bl - 100}`, col: '#b06cff', f: () => BR.cont() });
+    items.push({ s: 'ЛИПОВАЯ ВЕТКА', col: '#b06cff', f: () => BR.begin() });
+  }
   items.push({ s: 'ХАРДКОР' + (hcDone() ? ' (ПРОЙДЕН)' : best ? ` (РЕКОРД: УР.${best})` : ''), col: '#ff5a5a', f: () => {
     HC = true;
     scene = cardScene(['ХАРДКОР\n\nОдно сердце. Ни одной флешки. Яма — смерть.\n\nНикаких чекпоинтов: умер — и всё с первого уровня. Обычное сохранение не трогается.'], () => gotoLevel(1), 3);
   } });
   items.push({ s: 'КОНСТРУКТОР (E)', col: '#ffd23e', f: () => { scene = makerMenuScene(); } });
   items.push({ s: 'НАСТРОЙКИ', f: () => { scene = settingsScene(() => { scene = titleScene(); }); } });
-  const BW = 160, BH = 15, X = (VW - BW) / 2, Y0 = 74, STEP = 17;
+  const tight = items.length > 5, BW = 160, BH = tight ? 12 : 15, X = (VW - BW) / 2, Y0 = tight ? 68 : 74, STEP = tight ? 14 : 17;
   let t = 0, sel = 0;
   return {
     pad: 'none',
@@ -1535,7 +1650,7 @@ function titleScene() {
       items.forEach((it, i) => {
         const y = Y0 + i * STEP, on = i === sel;
         box(X, y, BW, BH, on ? '#19ff9c' : '#2b2a33', on ? '#fff' : it.col || '#9a9aa6');
-        text(it.s, 160, y + 5, on ? '#17161c' : it.col || '#fff', 6, 'center');
+        text(it.s, 160, y + (tight ? 3 : 5), on ? '#17161c' : it.col || '#fff', 6, 'center');
       });
       text('↑ ↓ ВЫБОР   ENTER   В ИГРЕ: ESC ПАУЗА', 160, 168, '#9a9aa6', 6, 'center');
     },
@@ -1731,16 +1846,19 @@ function drawBoat(x, y, dir, alert) {
   ctx.restore();
   if (alert) text('!', x + 20, y - 40, '#ff3b3b', 8, 'center');
 }
-function swimScene(done) {
-  const WW = 2800, SURF = 44, FLOOR = 166, R = rng(777);
-  const mines = [], boats = [], charges = [], blasts = [], fx = [];
-  for (let x = 240; x < WW - 200; x += 100 + R() * 45) {
-    const two = R() < 0.45, y1 = 60 + R() * (two ? 36 : 88);
+function swimScene(done, opt) {
+  // opt (Липовая ветка, уровень 104 «Мёртвое море»): { fail } — солёная вода выталкивает вверх, мины плавают у поверхности,
+  // вместо катеров — подлодки, стреляющие торпедами по глубине
+  opt = opt || {};
+  const DS = !!opt.fail, WW = DS ? 2600 : 2800, SURF = 44, FLOOR = 166, R = rng(DS ? 1043 : 777);
+  const mines = [], boats = [], charges = [], blasts = [], fx = [], tps = [];
+  for (let x = 240; x < WW - 200; x += (DS ? 92 : 100) + R() * 45) {
+    const two = R() < 0.45, y1 = DS ? 54 + R() * 22 : 60 + R() * (two ? 36 : 88);
     mines.push({ x, y0: y1, ph: R() * 6, ax: R() < 0.35 ? 20 : 0 });
-    if (two) mines.push({ x: x + R() * 16 - 8, y0: y1 + 64 + R() * 16, ph: R() * 6, ax: R() < 0.35 ? 20 : 0 });
+    if (two) mines.push({ x: x + R() * 16 - 8, y0: y1 + (DS ? 78 : 64) + R() * 16, ph: R() * 6, ax: R() < 0.35 ? 20 : 0 });
   }
-  for (const bx of [520, 980, 1440, 1900, 2360]) boats.push({ x0: bx - 140, x1: bx + 140, x: bx, dir: 1, cd: 70, near: false });
-  const S = { x: 24, y: 100, vx: 0, vy: 0, hp: HC ? 1 : 3, max: HC ? 1 : 3, inv: 0, face: 1 };
+  for (const bx of DS ? [560, 1000, 1440, 1880, 2200] : [520, 980, 1440, 1900, 2360]) boats.push({ x0: bx - 140, x1: bx + 140, x: bx, dir: 1, cd: 70, near: false, y: 80 + (bx % 5) * 14, ph: bx });
+  const hp0 = HC ? 1 : DS ? 2 : 3, S = { x: 24, y: DS ? 70 : 100, vx: 0, vy: 0, hp: hp0, max: hp0, inv: 0, face: 1 };
   let st = 0, t = 0, et = 0, shk = 0, why = '';
   const mpos = m => [m.x + Math.sin(t * 0.03 + m.ph) * m.ax, m.y0 + Math.sin(t * 0.05 + m.ph) * 8];
   const boom = (x, y, n) => { for (let i = 0; i < n; i++) fx.push({ x, y, vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3, life: 18 + Math.random() * 14, col: ['#ffd23e', '#ff8a2a', '#fff'][i % 3] }); };
@@ -1750,16 +1868,16 @@ function swimScene(done) {
     if (S.hp <= 0) { st = 2; et = 0; }
   };
   return {
-    pad: 'swim', pausable: true, music: 'Odessa',
-    dbg: () => ({ S, mines, boats, charges, blasts, t, mpos, WW, st }), // для автотестов
+    pad: 'swim', pausable: true, music: DS ? 'Mossad' : 'Odessa',
+    dbg: () => ({ S, mines, boats, charges, blasts, tps, t, mpos, WW, st }), // для автотестов
     update() {
       t++; if (shk) shk--;
       for (const p of fx) { p.x += p.vx; p.y += p.vy; p.life--; }
       for (let i = fx.length; i--;) if (fx[i].life <= 0) fx.splice(i, 1);
       if (st === 1) { if (++et > 110) done(); return; }
-      if (st === 2) { et++; if (et > 60 && anyPressed) { if (HC) startLevel(1); else scene = swimScene(done); } return; }
+      if (st === 2) { et++; if (et > 60 && anyPressed) { if (DS) scene = opt.fail(why); else if (HC) startLevel(1); else scene = swimScene(done); } return; }
       const ax = keys.right - keys.left, ay = keys.down - keys.jump;
-      S.vx += (ax * 1.7 - S.vx) * 0.12; S.vy += (ay * 1.7 - S.vy) * 0.12;
+      S.vx += (ax * 1.7 - S.vx) * 0.12; S.vy += (ay * 1.7 - (DS ? 0.75 : 0) - S.vy) * 0.12;   // рассол выталкивает вверх: чтобы нырять, держи ↓
       if (ax) S.face = ax;
       S.x = clamp(S.x + S.vx, 6, WW - 20); S.y = clamp(S.y + S.vy, SURF + 8, FLOOR - 8);
       if (S.inv > 0) S.inv--;
@@ -1770,7 +1888,19 @@ function swimScene(done) {
         const [mx, my] = mpos(m);
         if (Math.hypot(cx - mx, cy - my) < 11) { m.dead = true; boom(mx, my, 16); blasts.push({ x: mx, y: my, t: 0 }); sfx(90, 0.5, 'sawtooth', -40, 0.09); hit('ХОЛОС ПОДОРВАЛСЯ НА МИНЕ'); }
       }
-      for (const b of boats) {
+      if (DS) {   // подлодки: плывут на глубине и пускают торпеду вдоль неё, когда игрок рядом по горизонтали
+        for (const b of boats) {
+          b.x += b.dir * 0.5; if (b.x < b.x0) b.dir = 1; if (b.x > b.x1) b.dir = -1;
+          b.sy = b.y + Math.sin(t * 0.02 + b.ph) * 16;
+          b.near = Math.abs(cx - (b.x + 20)) < 150;
+          if (b.near && --b.cd <= 0) { b.cd = 110; const d = cx > b.x + 20 ? 1 : -1; tps.push({ x: b.x + 20 + d * 22, y: b.sy, vx: d * 2.3, life: 150 }); sfx(200, 0.25, 'sawtooth', -120, 0.05); }
+        }
+        for (const tp of tps) {
+          tp.x += tp.vx; tp.life--;
+          if (Math.abs(cx - tp.x) < 9 && Math.abs(cy - tp.y) < 5) { tp.life = 0; boom(tp.x, tp.y, 16); blasts.push({ x: tp.x, y: tp.y, t: 0 }); sfx(90, 0.5, 'sawtooth', -40, 0.09); hit('ПОДЛОДКА МОССАДА ПОПАЛА ТОРПЕДОЙ'); }
+        }
+        for (let i = tps.length; i--;) if (tps[i].life <= 0) tps.splice(i, 1);
+      } else for (const b of boats) {
         b.x += b.dir * 0.45; if (b.x < b.x0) b.dir = 1; if (b.x > b.x1) b.dir = -1;
         b.near = Math.abs(cx - (b.x + 20)) < 95;
         if (b.near && --b.cd <= 0) { b.cd = 80; charges.push({ x: b.x + 20, y: SURF + 6, ty: clamp(cy + (Math.random() - 0.5) * 36, 66, 150) }); sfx(300, 0.1, 'triangle', -150, 0.04); }
@@ -1779,7 +1909,7 @@ function swimScene(done) {
         c.y += 1.3;
         if (c.y >= c.ty) { c.dead = true; blasts.push({ x: c.x, y: c.y, t: 0 }); boom(c.x, c.y, 18); sfx(80, 0.5, 'sawtooth', -30, 0.09); shk = 6; }
       }
-      for (const bl of blasts) { bl.t++; if (bl.t < 14 && Math.hypot(cx - bl.x, cy - bl.y) < 8 + bl.t * 1.4) hit('БЕРЕГОВАЯ ОХРАНА ПОПАЛА БОМБОЙ'); }
+      for (const bl of blasts) { bl.t++; if (!DS && bl.t < 14 && Math.hypot(cx - bl.x, cy - bl.y) < 8 + bl.t * 1.4) hit('БЕРЕГОВАЯ ОХРАНА ПОПАЛА БОМБОЙ'); }
       for (let i = charges.length; i--;) if (charges[i].dead) charges.splice(i, 1);
       for (let i = blasts.length; i--;) if (blasts[i].t > 22) blasts.splice(i, 1);
       if (S.x >= WW - 60) { st = 1; et = 0; sfx(600, 0.5, 'triangle', 600, 0.07); }
@@ -1794,7 +1924,7 @@ function swimScene(done) {
       if (cam > WW - 700) { ctx.fillStyle = '#d9bf86'; for (let x = 0; x < VW; x += 8) { const h = 4 + hash(x / 8, 3) * 9; ctx.fillRect(x, SURF - h * clamp((cam - (WW - 700)) / 300, 0, 1), 8, h); } }
       ctx.fillStyle = '#d6efff'; ctx.fillRect(0, SURF, VW, 4);
       // море
-      const sea = ctx.createLinearGradient(0, SURF, 0, VH); sea.addColorStop(0, '#3a9fe0'); sea.addColorStop(1, '#08224a');
+      const sea = ctx.createLinearGradient(0, SURF, 0, VH); sea.addColorStop(0, DS ? '#4fc7d4' : '#3a9fe0'); sea.addColorStop(1, DS ? '#0c3a4a' : '#08224a');
       ctx.fillStyle = sea; ctx.fillRect(0, SURF + 2, VW, VH);
       ctx.fillStyle = 'rgba(255,255,255,0.06)';
       for (let i = 0; i < 5; i++) { const x = ((i * 84 + t * 0.25 - cam * 0.5) % 420 + 420) % 420 - 50; ctx.beginPath(); ctx.moveTo(x, SURF + 2); ctx.lineTo(x + 18, SURF + 2); ctx.lineTo(x + 70, VH); ctx.lineTo(x + 6, VH); ctx.fill(); }
@@ -1826,7 +1956,17 @@ function swimScene(done) {
         const r = 8 + bl.t * 1.4; ctx.fillStyle = `rgba(255,${200 - bl.t * 6},60,${Math.max(0, 0.7 - bl.t / 32)})`;
         ctx.beginPath(); ctx.arc(bl.x, bl.y, r, 0, 7); ctx.fill();
       }
-      for (const b of boats) drawBoat(b.x, SURF, b.dir, b.near);
+      if (DS) {
+        for (const tp of tps) { ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(tp.x) - 6, Math.round(tp.y) - 2, 13, 5); ctx.fillStyle = '#c9c9d4'; ctx.fillRect(Math.round(tp.x) - 5, Math.round(tp.y) - 1, 11, 3); ctx.fillStyle = frame % 6 < 3 ? '#ff3b3b' : '#ffd23e'; ctx.fillRect(Math.round(tp.x + (tp.vx > 0 ? 4 : -6)), Math.round(tp.y) - 1, 2, 3); }
+        for (const b of boats) {   // подлодка: корпус, рубка, перископ
+          ctx.save(); ctx.translate(Math.round(b.x + 20), Math.round(b.sy)); ctx.scale(b.dir > 0 ? 1 : -1, 1);
+          const r = (a, c, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(a, c, w, h); };
+          r(-21, -6, 42, 13, '#17161c'); r(-20, -5, 40, 11, '#4a5568'); r(-20, 1, 40, 3, '#2d3748'); r(-6, -12, 14, 7, '#17161c'); r(-5, -11, 12, 6, '#4a5568'); r(1, -17, 2, 6, '#17161c');
+          r(12, -3, 5, 4, '#ffd23e'); r(-26, -2, 5, 5, '#17161c'); r(-25, -1, 3, 3, frame % 4 < 2 ? '#c9c9d4' : '#6b7280'); r(-14, -2, 3, 3, b.near && frame % 12 < 6 ? '#ff3b3b' : '#2d3748');
+          ctx.restore();
+          if (b.near) text('!', b.x + 20, b.sy - 26, '#ff3b3b', 8, 'center');
+        }
+      } else for (const b of boats) drawBoat(b.x, SURF, b.dir, b.near);
       // игрок
       if (st !== 2 && S.inv % 6 < 3) {
         ctx.save(); ctx.translate(Math.round(S.x + 6), Math.round(S.y + 4)); ctx.rotate(S.face > 0 ? Math.PI / 2 : -Math.PI / 2);
@@ -1836,14 +1976,14 @@ function swimScene(done) {
       ctx.restore();
       // интерфейс
       for (let i = 0; i < S.max; i++) spr(i < S.hp ? IMG.heart : IMG.heartOff, 6 + i * 13, 6, false, 2);
-      text('ДО БЕРЕГА', 314, 5, '#17161c', 6, 'right');
+      text(DS ? 'ДО БЕРЕГА   ↑ РАССОЛ ВЫТАЛКИВАЕТ' : 'ДО БЕРЕГА', 314, 5, '#17161c', 6, 'right');
       box(214, 14, 100, 5, '#2b2a33', '#000'); ctx.fillStyle = '#19ff9c'; ctx.fillRect(214, 14, 100 * clamp(S.x / (WW - 60), 0, 1), 5);
-      if (t < 200 && !st) text('ПЛЫВИ ВПРАВО. БЕРЕГОВАЯ ОХРАНА ДРОЖИТ.', 160, 28, '#17161c', 6, 'center');
+      if (t < 200 && !st) text(DS ? 'ПЛЫВИ ВПРАВО. РАССОЛ ТОЛКАЕТ ВВЕРХ — К МИНАМ.' : 'ПЛЫВИ ВПРАВО. БЕРЕГОВАЯ ОХРАНА ДРОЖИТ.', 160, 28, '#17161c', 6, 'center');
       if (st === 1) { ctx.fillStyle = '#00000088'; ctx.fillRect(0, 60, VW, 50); text('БЕРЕГ!', 160, 68, '#19ff9c', 16, 'center'); text('ПОХОЖЕ, ИЗРАИЛЬ...', 160, 92, '#fff', 8, 'center'); }
       if (st === 2) {
         ctx.fillStyle = '#000000b0'; ctx.fillRect(0, 50, VW, 70);
-        text(why, 160, 62, '#ff5a5a', 8, 'center'); text('ХОЛОС ИДЁТ КО ДНУ.', 160, 80, '#fff', 8, 'center');
-        if (et > 60 && frame % 60 < 40) text(again(), 160, 100, '#9a9aa6', 6, 'center');
+        text(why, 160, 62, '#ff5a5a', 8, 'center'); text(DS ? 'ДАЖЕ СОЛЬ НЕ СПАСЛА.' : 'ХОЛОС ИДЁТ КО ДНУ.', 160, 80, '#fff', 8, 'center');
+        if (et > 60 && frame % 60 < 40) text(DS ? opt.again() : again(), 160, 100, '#9a9aa6', 6, 'center');
       }
     },
   };
@@ -1861,54 +2001,90 @@ function thumb(key, x, y, maxH) {
   const img = IMG[key], k = Math.min(1, maxH / img.height);
   ctx.drawImage(img, Math.round(x), Math.round(y), Math.round(img.width * k), Math.round(img.height * k));
 }
-function passportScene(done) {
+function passportScene(done, opt) {
+  // opt (Липовая ветка, уровень 106 «Легенда»): { docs, times, change, title, fail } — несколько документов подряд, таймер
+  // сжимается, правила меняются посреди документа, одна ошибка проваливает весь набор. Без opt — обычный паспорт; если у
+  // Холоса банка мёда, добавляется строка «ТОВАРЫ»: оставишь «ДА: МЁД» — мевли изымет банку
+  opt = opt || {};
   const STAMPS = [['СИНЯЯ ЗВЕЗДА', '#2f6fe0', 'star'], ['КРАСНЫЙ КРУГ', '#e03030', 'circle'], ['ЗЕЛЁНЫЙ РОМБ', '#2ecc71', 'diamond'], ['ЖЁЛТЫЙ КВАДРАТ', '#ffd23e', 'square']];
   const PHOTOS = [['ХОЛОС', 'holos'], ['ДЫНЕКС', 'dynex'], ['МРДРНОС', 'nos'], ['НИКИТА', 'yarosh']];
+  const COUNTRIES = ['ИЗРАИЛЬ', 'ГАЗА', 'ОДЕССА', 'МЕТА-МИР'];
   const R = rng((Math.random() * 1e9) | 0);
   const pick = a => a[Math.floor(R() * a.length)];
   const shuf = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const digits = k => [...Array(k)].map(() => Math.floor(R() * 10)).join('');
-  const d0 = 1 + Math.floor(R() * 9), bad0 = d0 % 9 + 1;
-  const stamp = pick(STAMPS), birth = 1970 + Math.floor(R() * 36), expiry = 2028 + Math.floor(R() * 8);
-  const row = (key, label, items, ok, kind, why, h = 14) => {
-    const opts = shuf(items), okIdx = opts.indexOf(ok); let cur;
-    do cur = Math.floor(R() * opts.length); while (cur === okIdx);
-    return { key, label, opts, ok: okIdx, cur, kind, why, h };
+  const honey = !opt.docs && HONEY > 0, DOCS = opt.docs || 1, TIMES = opt.times || [4800], rh = honey ? 11 : 14;
+  const BTN = { x: 246, y: 146, w: 68, h: 24 };
+  let doc = 0, rows, rules, stamp, country, d0, goods, TIME, t, sel, st, et, ok, msg, changed, lost;
+  const newDoc = () => {
+    d0 = 1 + Math.floor(R() * 9); const bad0 = d0 % 9 + 1;
+    stamp = pick(STAMPS); country = 'ИЗРАИЛЬ';
+    const birth = 1970 + Math.floor(R() * 36), expiry = 2028 + Math.floor(R() * 8);
+    const row = (key, label, items, okv, kind, why, h = rh) => {
+      const opts = shuf(items), okIdx = opts.indexOf(okv); let cur;
+      do cur = Math.floor(R() * opts.length); while (cur === okIdx);
+      return { key, label, opts, ok: okIdx, cur, kind, why, h };
+    };
+    rows = [
+      row('country', 'СТРАНА', COUNTRIES, 'ИЗРАИЛЬ', 'text', 'СТРАНА НЕ ТА.'),
+      row('stamp', 'ПЕЧАТЬ', STAMPS, stamp, 'stamp', 'ПЕЧАТЬ НЕ ТА.'),
+      row('photo', 'ФОТО', PHOTOS, PHOTOS[0], 'photo', 'ЭТО НЕ ХОЛОС НА ФОТО.', 18),
+      row('num', 'НОМЕР', [d0 + digits(6), bad0 + digits(6), d0 + digits(5), d0 + digits(7)], null, 'text', 'НОМЕР НЕВЕРНЫЙ.'),
+      row('birth', 'РОДИЛСЯ', [String(birth), '2009', '2014', '2023'], String(birth), 'text', 'СЛИШКОМ МОЛОД.'),
+      row('exp', 'ДО', [String(expiry), '2015', '2025', '2044'], String(expiry), 'text', 'СРОК НЕ ТОТ.'),
+    ];
+    rows[3].ok = rows[3].opts.findIndex(o => o.length === 7 && o[0] === String(d0));
+    do rows[3].cur = Math.floor(R() * 4); while (rows[3].cur === rows[3].ok);
+    rules = [['СТРАНА: ИЗРАИЛЬ'], ['ПЕЧАТЬ: ' + stamp[0], () => 'stamp'], ['ФОТО: КАК У ХОЛОСА', () => 'photo'], ['НОМЕР: 7 ЦИФР, ПЕРВАЯ ' + d0], ['РОДИЛСЯ ДО 2008'], ['СРОК: 2027-2036']];
+    goods = null;
+    if (honey) {   // товары: «ДА: МЁД» подделать на «НЕТ»; на исход границы это не влияет, только на судьбу банки
+      goods = row('goods', 'ТОВАРЫ', ['НЕТ', 'ДА: МЁД', 'ДА: ОРУЖИЕ'], 'НЕТ', 'text', '');
+      goods.cur = goods.opts.indexOf('ДА: МЁД');
+      rows.push(goods); rules.push(['ТОВАРЫ: НЕТ']);
+    }
+    let ry = 31; for (const r of rows) { r.y = ry; ry += r.h + 2; }
+    TIME = TIMES[Math.min(doc, TIMES.length - 1)]; t = 0; sel = 0; st = 0; et = 0; ok = false; changed = false; lost = false;
+    msg = honey ? 'ДОКУМЕНТЫ. И ЧТО У ТЕБЯ В РЮКЗАКЕ?' : doc ? 'СЛЕДУЮЩИЙ ДОКУМЕНТ.' : 'ДОКУМЕНТЫ.';
   };
-  const rows = [
-    row('country', 'СТРАНА', ['ИЗРАИЛЬ', 'ГАЗА', 'ОДЕССА', 'МЕТА-МИР'], 'ИЗРАИЛЬ', 'text', 'СТРАНА НЕ ТА.'),
-    row('stamp', 'ПЕЧАТЬ', STAMPS, stamp, 'stamp', 'ПЕЧАТЬ НЕ ТА.'),
-    row('photo', 'ФОТО', PHOTOS, PHOTOS[0], 'photo', 'ЭТО НЕ ХОЛОС НА ФОТО.', 18),
-    row('num', 'НОМЕР', [d0 + digits(6), bad0 + digits(6), d0 + digits(5), d0 + digits(7)], null, 'text', 'НОМЕР НЕВЕРНЫЙ.'),
-    row('birth', 'РОДИЛСЯ', [String(birth), '2009', '2014', '2023'], String(birth), 'text', 'СЛИШКОМ МОЛОД.'),
-    row('exp', 'ДО', [String(expiry), '2015', '2025', '2044'], String(expiry), 'text', 'СРОК НЕ ТОТ.'),
-  ];
-  rows[3].ok = rows[3].opts.findIndex(o => o.length === 7 && o[0] === String(d0));
-  do rows[3].cur = Math.floor(R() * 4); while (rows[3].cur === rows[3].ok);
-  let ry = 31; for (const r of rows) { r.y = ry; ry += r.h + 2; }
-  const rules = [['СТРАНА: ИЗРАИЛЬ'], ['ПЕЧАТЬ: ' + stamp[0], () => 'stamp'], ['ФОТО: КАК У ХОЛОСА', () => 'photo'], ['НОМЕР: 7 ЦИФР, ПЕРВАЯ ' + d0], ['РОДИЛСЯ ДО 2008'], ['СРОК: 2027-2036']];
-  const TIME = 4800, BTN = { x: 246, y: 146, w: 68, h: 24 };
-  let t = 0, sel = 0, st = 0, et = 0, ok = false, msg = 'ДОКУМЕНТЫ.';
+  newDoc();
   const val = r => r.opts[r.cur];
   const submit = reason => {
     if (st) return;
-    const bad = rows.find(r => r.cur !== r.ok);
+    const bad = rows.find(r => r !== goods && r.cur !== r.ok);
     ok = !reason && !bad; st = 1; et = 0;
-    msg = ok ? 'ОДАА!' : (reason || bad.why) + ' НЕТ.';
+    lost = ok && goods && goods.cur !== goods.ok;   // банка не задекларирована «нет» — изъята
+    msg = ok ? (lost ? 'ОДАА. А МЁД Я ИЗЫМАЮ.' : opt.docs ? 'ОДАА! ЕСТЬ ЕЩЁ ДОКУМЕНТ.' : 'ОДАА!') : (reason || bad.why) + ' НЕТ.';
+    if (ok && opt.docs && doc + 1 >= DOCS) msg = 'ОДАА. ЛЕГЕНДА ПРИНЯТА.';
   };
   const change = (r, d) => { r.cur = (r.cur + d + r.opts.length) % r.opts.length; sfx(500 + r.cur * 40, 0.04, 'square', 0, 0.03); };
+  // правила меняются посреди документа: печать, а в следующих документах ещё и страна
+  const ruleChange = () => {
+    changed = true;
+    const ns = pick(STAMPS.filter(x => x !== stamp)); stamp = ns;
+    rules[1] = ['ПЕЧАТЬ: ' + ns[0], () => 'stamp']; rows[1].ok = rows[1].opts.indexOf(ns);
+    if (doc >= 1) { country = pick(COUNTRIES.filter(x => x !== country)); rules[0] = ['СТРАНА: ' + country]; rows[0].ok = rows[0].opts.indexOf(country); }
+    msg = 'ПРАВИЛА ИЗМЕНИЛИСЬ! ПРОВЕРЬ ПЕЧАТЬ' + (doc >= 1 ? ' И СТРАНУ.' : '.');
+    sfx(900, 0.15, 'square', -400, 0.08); sfx(450, 0.25, 'sawtooth', 0, 0.05);
+  };
   return {
-    pad: 'none', pausable: true, music: 'Papers PLease',
-    rows, // для тестов
+    pad: 'none', pausable: true, music: opt.music || 'Papers PLease',
+    get rows() { return rows; }, // для тестов
     update() {
       t++;
       if (st === 1) {
         et++;
         if (et === 18) sfx(ok ? 700 : 110, 0.3, ok ? 'triangle' : 'sawtooth', ok ? 500 : -60, 0.09);
-        if (et > 120) { if (ok) done(); else scene = failScene(msg, () => { if (HC) startLevel(1); else scene = passportScene(done); }); }
+        if (et > 120) {
+          if (ok) {
+            if (lost) { HONEY = 0; HONEY_LOST = false; }
+            if (++doc < DOCS) newDoc(); else done();
+          } else if (opt.fail) scene = opt.fail(msg);
+          else scene = failScene(msg, () => { if (HC) startLevel(1); else scene = passportScene(done); });
+        }
         return;
       }
       if (t > TIME) { submit('ВРЕМЯ ВЫШЛО.'); return; }
+      if (opt.change && !changed && t > TIME * 0.45) ruleChange();
       if (codes.has('ArrowUp') || codes.has('KeyW')) sel = (sel + rows.length - 1) % rows.length;
       if (codes.has('ArrowDown') || codes.has('KeyS')) sel = (sel + 1) % rows.length;
       if (codes.has('ArrowLeft') || codes.has('KeyA')) change(rows[sel], -1);
@@ -1922,30 +2098,31 @@ function passportScene(done) {
     draw() {
       ctx.fillStyle = '#26222e'; ctx.fillRect(0, 0, VW, VH);
       ctx.fillStyle = '#3a3248'; ctx.fillRect(0, 138, VW, 42);
-      text('ГРАНИЦА ИЗРАИЛЯ', 6, 4, '#19ff9c', 6);
+      text(opt.title ? opt.title(doc + 1, DOCS) : 'ГРАНИЦА ИЗРАИЛЯ', 6, 4, '#19ff9c', 6);
       text('ВРЕМЯ', 172, 4, '#9a9aa6', 6);
       box(206, 4, 108, 6, '#2b2a33', '#000'); const left = clamp(1 - t / TIME, 0, 1); ctx.fillStyle = left > 0.3 ? '#19ff9c' : '#ff5a5a'; ctx.fillRect(206, 4, 108 * left, 6);
       // правила
       box(4, 16, 110, 120, '#f1ead2', '#17161c');
-      text('ПРАВИЛА ВЪЕЗДА', 59, 20, '#a02020', 6, 'center');
-      let y = 31;
+      text('ПРАВИЛА ВЪЕЗДА', 59, 20, changed && frame % 16 < 8 ? '#e03030' : '#a02020', 6, 'center');
+      let y = 31; const gap = honey ? 2 : 4;
       for (const [s, ic] of rules) {
         const lines = wrap(s, ic ? 84 : 100, 6);
         lines.forEach((l, i) => text(l, 8, y + i * 8, '#17161c', 6));
         if (ic) { if (ic() === 'stamp') stampIcon(stamp[2], stamp[1], 96, y + 2); else thumb('holos', 96, y, 16); }
-        y += Math.max(lines.length * 8, ic ? 16 : 0) + 4;
+        y += Math.max(lines.length * 8, ic ? 16 : 0) + gap;
       }
       // паспорт
       box(118, 16, 198, 120, '#f1ead2', '#2d4c8f');
       ctx.fillStyle = '#2d4c8f'; ctx.fillRect(118, 16, 198, 12);
       text('ПАСПОРТ ХОЛОСА', 217, 19, '#fff', 6, 'center');
       rows.forEach((r, i) => {
-        text(r.label, 124, r.y + (r.h - 6) / 2, '#17161c', 6);
+        const ty = r.y + Math.floor((r.h - 6) / 2);
+        text(r.label, 124, ty, '#17161c', 6);
         box(172, r.y, 138, r.h, i === sel ? '#fff7c2' : '#fff', i === sel ? '#e0a000' : '#17161c');
-        text('<', 176, r.y + (r.h - 6) / 2, '#2d4c8f', 6); text('>', 301, r.y + (r.h - 6) / 2, '#2d4c8f', 6);
+        text('<', 176, ty, '#2d4c8f', 6); text('>', 301, ty, '#2d4c8f', 6);
         const v = val(r);
-        if (r.kind === 'text') text(v, 241, r.y + 4, '#17161c', 6, 'center');
-        else if (r.kind === 'stamp') { stampIcon(v[2], v[1], 190, r.y + 2); text(v[0], 246, r.y + 4, '#17161c', 6, 'center'); }
+        if (r.kind === 'text') text(v, 241, ty, '#17161c', 6, 'center');
+        else if (r.kind === 'stamp') { stampIcon(v[2], v[1], 190, r.y + Math.floor((r.h - 10) / 2)); text(v[0], 246, ty, '#17161c', 6, 'center'); }
         else thumb(v[1], 233, r.y + 1, 16);
       });
       // мельви
@@ -1982,34 +2159,69 @@ function failScene(reason, retry) {
   };
 }
 
-// ---------- выбор уровня (код Konami). Любой из 20 уровней, секретный, и обе мини-игры. Прогресс при этом не сохраняется
+// ---------- выбор уровня (код Konami). Любой из 20 уровней, секретный, обе мини-игры и страница Липовой ветки. Прогресс при этом не сохраняется
 function levelSelectScene(prev) {
-  const cells = [];
-  for (let n = 1; n <= LAST; n++) cells.push({ s: String(n), n, f: () => startLevel(n), col: n === LAST ? '#ff5a5a' : null });
   const CW = 40, CH = 17, GX = (VW - CW * 5 - 4 * 4) / 2, GY = 30;
-  cells.forEach((c, i) => { c.x = GX + (i % 5) * (CW + 4); c.y = GY + Math.floor(i / 5) * (CH + 4); c.w = CW; c.h = CH; });
-  const SW = 90, SX = (VW - SW * 3 - 8) / 2, SY = GY + 4 * (CH + 4) + 6;
-  [['ЗАПЛЫВ', () => advance(4), '#4aa3ff'], ['ПАСПОРТ', () => advance(7), '#ffd23e'], ['СЕКРЕТ', () => startLevel(SALT), '#f7f1fa']].forEach(([s, f, col], i) =>
-    cells.push({ s, f, col, x: SX + i * (SW + 4), y: SY, w: SW, h: CH }));
-  let sel = Math.max(0, Math.min(LAST - 1, (L && L.n <= LAST ? L.n : load()) - 1)), t = 0;
-  const go = c => { CHEAT = true; HC = false; musDuck = 1; sfx(880, 0.15, 'triangle', 600, 0.05); c.f(); };
+  let page = 0, cells = [], sel = 0, t = 0;
+  const grid = (list, n0, onRow) => list.forEach((c, i) => { c.x = GX + (i % 5) * (CW + 4); c.y = GY + Math.floor(i / 5) * (CH + 4); c.w = CW; c.h = CH; });
+  const row = (list, y, ws) => { const tot = ws.reduce((a, b) => a + b, 0) + (list.length - 1) * 4; let x = (VW - tot) / 2; list.forEach((c, i) => { c.x = x; c.y = y; c.w = ws[i]; c.h = CH; x += ws[i] + 4; }); };
+  const build = () => {
+    if (page === 0) {
+      cells = [];
+      for (let n = 1; n <= LAST; n++) cells.push({ s: String(n), n, f: () => startLevel(n), col: n === LAST ? '#ff5a5a' : null });
+      grid(cells);
+      const sp = [
+        { s: 'ЗАПЛЫВ', f: () => advance(4), col: '#4aa3ff', info: 'МИНИ-ИГРА ПЕРЕД УРОВНЕМ 4' },
+        { s: 'ПАСПОРТ', f: () => advance(7), col: '#ffd23e', info: 'МИНИ-ИГРА ПЕРЕД УРОВНЕМ 7' },
+        { s: 'СЕКРЕТ', f: () => { HONEY = 0; startLevel(SALT); }, col: '#f7f1fa', info: 'СОЛЕВАЯ ШАХТА: ВЕДМЕДИК БО' },
+        { s: 'ВЕТКА', page: 1, col: '#b06cff', info: 'ЛИПОВАЯ ВЕТКА: 10 УРОВНЕЙ' },
+      ];
+      row(sp, GY + 4 * (CH + 4) + 6, [66, 66, 66, 66]); cells.push(...sp);
+    } else {
+      cells = [];
+      for (let n = 101; n <= 110; n++) cells.push({ s: String(n - 100), n, f: () => BR.go(n, false), col: n === 110 ? '#ff5a5a' : '#b06cff', info: n > 100 ? BR.NAMES[n - 101] : '' });
+      grid(cells);
+      const sp = [
+        { s: 'СЕКРЕТ+МЁД', f: () => { HONEY = 3; startLevel(SALT); }, col: '#ffd23e', info: 'БО С ПОЛНОЙ БАНКОЙ МЁДА (3 ПОРЦИИ)' },
+        { s: 'НАЗАД', page: 0, col: '#9a9aa6', info: '' },
+      ];
+      row(sp, GY + 2 * (CH + 4) + 6, [90, 60]); cells.push(...sp);
+    }
+  };
+  build();
+  sel = page === 0 ? Math.max(0, Math.min(LAST - 1, (L && L.n <= LAST ? L.n : load()) - 1)) : 0;
+  const go = c => {
+    if (c.page !== undefined) { page = c.page; build(); sel = page ? 0 : 23; sfx(600, 0.05, 'square', 0, 0.03); return; }
+    CHEAT = true; HC = false; musDuck = 1; sfx(880, 0.15, 'triangle', 600, 0.05); c.f();
+  };
+  // стрелки: ближайшая клетка в нужную сторону (сетки на страницах разные)
+  const nav = (dx, dy) => {
+    const c = cells[sel], cx = c.x + c.w / 2, cy = c.y + c.h / 2; let best = -1, bs = 1e9;
+    cells.forEach((o, i) => {
+      if (i === sel) return;
+      const ox = o.x + o.w / 2 - cx, oy = o.y + o.h / 2 - cy;
+      if (dx ? Math.sign(ox) !== dx || Math.abs(oy) > CH * 0.6 : Math.sign(oy) !== dy) return;
+      const sc = dx ? Math.abs(ox) : Math.abs(oy) + Math.abs(ox) * 0.4;
+      if (sc < bs) { bs = sc; best = i; }
+    });
+    if (best >= 0) sel = best;
+  };
   return {
     pad: 'none', music: 'Menu',
     update() {
       t++;
       if (codes.has('Escape') || codes.has('KeyP')) { musDuck = 1; scene = prev; return; }
-      const n = cells.length;
-      if (codes.has('ArrowLeft') || codes.has('KeyA')) sel = sel === 20 ? 22 : (sel + n - 1) % n;
-      if (codes.has('ArrowRight') || codes.has('KeyD')) sel = (sel + 1) % n;
-      if (codes.has('ArrowUp') || codes.has('KeyW')) sel = sel >= 20 ? Math.min(19, 15 + (sel - 20) * 2) : sel >= 5 ? sel - 5 : 20 + Math.min(2, Math.floor(sel / 2));
-      if (codes.has('ArrowDown') || codes.has('KeyS')) sel = sel >= 20 ? Math.min(4, (sel - 20) * 2) : sel >= 15 ? 20 + Math.min(2, Math.floor((sel - 15) / 2)) : sel + 5;
+      if (codes.has('ArrowLeft') || codes.has('KeyA')) nav(-1, 0);
+      if (codes.has('ArrowRight') || codes.has('KeyD')) nav(1, 0);
+      if (codes.has('ArrowUp') || codes.has('KeyW')) nav(0, -1);
+      if (codes.has('ArrowDown') || codes.has('KeyS')) nav(0, 1);
       if (t > 10 && (codes.has('Enter') || codes.has('Space') || codes.has('KeyZ'))) { go(cells[sel]); return; }
       if (click && t > 10) { const i = cells.findIndex(c => inside(click, c)); if (i >= 0) { sel = i; go(cells[i]); } }
     },
     draw() {
       drawBG(3, frame * 0.3);
       ctx.fillStyle = '#000000b0'; ctx.fillRect(0, 0, VW, VH);
-      text('ВЫБОР УРОВНЯ', 160, 8, '#19ff9c', 8, 'center');
+      text(page ? 'ЛИПОВАЯ ВЕТКА' : 'ВЫБОР УРОВНЯ', 160, 8, page ? '#b06cff' : '#19ff9c', 8, 'center');
       text('КОД KONAMI АКТИВИРОВАН', 160, 19, '#9a9aa6', 6, 'center');
       cells.forEach((c, i) => {
         const on = i === sel;
@@ -2017,8 +2229,8 @@ function levelSelectScene(prev) {
         text(c.s, c.x + c.w / 2, c.y + 6, on ? '#17161c' : c.col || '#fff', 6, 'center');
       });
       const c = cells[sel];
-      const info = c.n ? ZONES[zoneOf(c.n)].name : sel === 20 ? 'МИНИ-ИГРА ПЕРЕД УРОВНЕМ 4' : sel === 21 ? 'МИНИ-ИГРА ПЕРЕД УРОВНЕМ 7' : 'СОЛЕВАЯ ШАХТА: ВЕДМЕДИК БО';
-      text(info, 160, SY + CH + 8, '#ffe27a', 6, 'center');
+      const info = c.info || (c.n && c.n < 100 ? ZONES[zoneOf(c.n)].name : '');
+      text(info, 160, cells[cells.length - 1].y + CH + 8, '#ffe27a', 6, 'center');
       text('СТРЕЛКИ ВЫБОР   ENTER / КЛИК ИГРАТЬ   ESC НАЗАД', 160, 168, '#6b6a76', 6, 'center');
       text('ПРОГРЕСС НЕ СОХРАНЯЕТСЯ', 160, 158, '#6b6a76', 6, 'center');
     },
@@ -2056,4 +2268,4 @@ function loop(ts) {
 requestAnimationFrame(loop);
 
 // хук для отладки и тестов
-window.__G = { levelSelectScene, startLevel, gotoLevel, buildLevel, keys, tick, render, press() { jumpPressed = true; anyPressed = true; }, get P() { return P; }, get L() { return L; }, get shots() { return shots; }, get scene() { return scene; }, set scene(s) { scene = s; }, deathScene, duoDeathScene, endingScene, crystalScene, titleScene, playScene, swimScene, passportScene, failScene, advance, ENEMY, SALT, LAST, codes, pressClick(x, y) { click = { x, y }; anyPressed = true; } };
+window.__G = { get HONEY() { return HONEY; }, set HONEY(v) { HONEY = v; }, hitBoss, passportScene, swimScene, cardScene, startLevel, levelSelectScene, startLevel, gotoLevel, buildLevel, keys, tick, render, press() { jumpPressed = true; anyPressed = true; }, get P() { return P; }, get L() { return L; }, get shots() { return shots; }, get scene() { return scene; }, set scene(s) { scene = s; }, deathScene, duoDeathScene, endingScene, crystalScene, titleScene, playScene, swimScene, passportScene, failScene, advance, ENEMY, SALT, LAST, codes, pressClick(x, y) { click = { x, y }; anyPressed = true; } };
