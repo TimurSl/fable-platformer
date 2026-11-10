@@ -26,8 +26,8 @@ function ask(msg, def) { let s = null; try { s = prompt(msg, def || ''); } catch
 const MK_TILES = { '#': 'ЗЕМЛЯ', '=': 'БЛОК', '^': 'ШИПЫ' };
 const MK_TOOLS = [['hand', 'РУКА: ДВИГАТЬ ВИД'], ['erase', 'ЛАСТИК'], ['#', 'ЗЕМЛЯ'], ['=', 'БЛОК'], ['^', 'ШИПЫ'],
   ['plat', 'ЕЗДЯЩАЯ ПЛАТФОРМА'], ['f', 'ФЛЕШКА: +1 СЕРДЦЕ'], ['start', 'СТАРТ ХОЛОСА'], ['goal', 'ПОРТАЛ: ФИНИШ']];
-const MK_ENEMIES = ['y', 'd', 'poc', 'tel', 'bar', 'ari', 'fat', 'ban', 'ano', 'mak', 'ros', 'laa', 'vlad', 'alt', 'duo'];
-const MK_NAME = Object.assign({}, NAMES, { y: 'Никита Ярош', d: 'Дынекс', duo: 'Навальный и Путин' });
+const MK_ENEMIES = ['y', 'y2', 'd', 'poc', 'tel', 'bar', 'ari', 'fat', 'ban', 'ano', 'mak', 'ros', 'laa', 'vlad', 'alt', 'duo'];
+const MK_NAME = Object.assign({}, NAMES, { y: 'Никита Ярош', y2: 'Ярош с кубами (баш 17%)', d: 'Дынекс', duo: 'Навальный и Путин' });
 for (const [id, s] of MK_TOOLS) MK_NAME[id] = s;
 const MK_OBJ = new Set(['plat', 'f', ...MK_ENEMIES]);
 const PAL_X = i => 2 + i * 17;
@@ -117,7 +117,7 @@ function mkBuild(d) {
     if (t === 'ban') { ents.push(ent('ban', x0, fy - 12, { w: lw, gy: fy, hx: clamp(cx * T - 4, x0, x0 + lw - 24), hy: fy - 90, st: 0, bt: 0, vy: 0, cd: 30 })); continue; }
     if (t === 'duo') { ents.push(ent('duo', x0, fy - 18, { w: lw, ph: 0, gy: fy, ax: x0, bx: x0 + lw - 12 })); continue; }
     const X = {
-      y: { cd: 60 }, d: { x0, x1, dir: -1 }, fat: { cd: 80 }, ari: { st: 0, cd: 50, vx: 0, vy: 0, face: -1 },
+      y: { cd: 60 }, y2: { cd: 60 }, d: { x0, x1, dir: -1 }, fat: { cd: 80 }, ari: { st: 0, cd: 50, vx: 0, vy: 0, face: -1 },
       bar: { x0, x1, dir: -1, st: 0, cd: 40 }, alt: { x0: x0 + 2, x1: Math.max(x0 + 2, (b + 1) * T - 16), cd: 100 },
       poc: { cd: 60, st: 0, tm: 0, met: false, talk: 0 }, mak: { cd: 70, st: 0, tm: 0, anim: 0 }, laa: { cd: 70, anim: 0 },
       vlad: { cd: 80, n: 0, bt: 0, face: -1 }, ano: { x0, x1, dir: -1, gy: fy, oy: 0, hv: 0, cd: 50 },
@@ -136,15 +136,15 @@ function mkPlay(d, mode, h) {
   const b = mkBuild(d), test = mode === 'test';
   L = { n: 0, W: d.W, g: d.g.map(r => r.slice()), ents: b.ents, plats: b.plats, secret: null, zone: d.zone, t: 0, cam: 0, cdBase: 96,
     spawnY: b.spawn.y, banner: [test ? 'ПРОВЕРКА: ДОЙДИ ДО ПОРТАЛА' : (d.name || 'БЕЗ НАЗВАНИЯ'), 140], pops: [] };
-  P = { x: b.spawn.x, y: b.spawn.y, w: 8, h: 13, vx: 0, vy: 0, hp: 3, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null, stop: 0, grace: 0 };
+  P = { x: b.spawn.x, y: b.spawn.y, w: 8, h: 13, vx: 0, vy: 0, hp: 3, max: 3, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null, stop: 0, bash: 0, grace: 0 };
   safe = { x: P.x, y: P.y }; shots = []; parts = []; shake = 0;
   L.cam = clamp(P.x - 140, 0, Math.max(0, L.W * T - VW));
   const deaths = h.deaths || 0;
   const c = L.custom = {
-    time: 0,
+    time: 0, exit: h.exit,
     update() {
       c.time++;
-      if (codes.has('Escape') || (click && inside(click, EXIT_BTN))) { sfx(300, 0.08); h.exit(); return true; }
+      if (click && inside(click, EXIT_BTN)) { sfx(300, 0.08); h.exit(); return true; }   // Esc открывает паузу (см. tick в game.js)
       return false;
     },
     draw() {
@@ -193,7 +193,7 @@ function mkIcon(t, x, y, Z) {
   else if (t === 'goal') for (let i = 0; i < 3; i++) r(2 + i * 2, i * 2, 10 - i * 4, 14 - i * 4, ['#7a3cff', '#19ff9c', '#ff4fd8'][(i + Math.floor(frame / 6)) % 3]);
   else if (t === 'ban') { r(6, 0, 2, 7, '#8a5a2c'); r(0, 6, 14, 7, '#e03030'); r(0, 6, 14, 1, '#ff8a7a'); }
   else if (t === 'duo') { fit(IMG.navy, 0, 7); fit(IMG.putin, 7, 7); }
-  else fit({ start: IMG.holos, f: IMG.flash, y: IMG.yarosh, d: IMG.dynex }[t] || IMG[t]);
+  else fit({ start: IMG.holos, f: IMG.flash, y: IMG.yarosh, y2: IMG.yarosh2, d: IMG.dynex }[t] || IMG[t]);
 }
 
 // ---------- редактор
@@ -318,7 +318,7 @@ function editorScene(d) {
     sfx(600, 0.04, 'square', 0, 0.03);
   }
   const me = {
-    pad: 'none', wheel: true,
+    pad: 'none', wheel: true, music: 'Level Editor',
     update() {
       if (toast && --toast[1] <= 0) toast = null;
       if (menu) { menuUpdate(); ptr.tap = null; stroke = null; wheel = 0; undoKey = false; return; }
@@ -484,7 +484,7 @@ function makerMenuScene(msg) {
     list.unshift(p); mkStore(list); sel = 0; page = 0; say('УРОВЕНЬ ДОБАВЛЕН — МОЖНО ИГРАТЬ');
   };
   return {
-    pad: 'none',
+    pad: 'none', music: 'Menu',
     update() {
       if (toast && --toast[1] <= 0) toast = null;
       const n = list.length;

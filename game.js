@@ -95,11 +95,21 @@ function box(x, y, w, h, fill, border) {
   ctx.fillStyle = fill; ctx.fillRect(x, y, w, h);
 }
 
+// ---------- настройки (хранятся в браузере)
+const SET = { music: 7, sfx: 8, shake: 1 };
+try {
+  const o = JSON.parse(localStorage.getItem('holos_set') || '{}');
+  for (const k of ['music', 'sfx']) if (Number.isFinite(o[k])) SET[k] = clamp(Math.round(o[k]), 0, 10);
+  if (o.shake === 0 || o.shake === 1) SET.shake = o.shake;
+} catch (e) { }
+function saveSet() { try { localStorage.setItem('holos_set', JSON.stringify(SET)); } catch (e) { } }
+
 // ---------- звук
-let AC = null;
-function initAudio() { if (!AC) try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { } if (AC && AC.state === 'suspended') AC.resume(); }
+let AC = null, musReady = false;   // musReady: браузер разрешает звук только после первого нажатия
+function initAudio() { musReady = true; if (!AC) try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { } if (AC && AC.state === 'suspended') AC.resume(); }
 function sfx(f, d = 0.1, type = 'square', slide = 0, vol = 0.05) {
-  if (!AC) return;
+  if (!AC || !SET.sfx) return;
+  vol *= SET.sfx / 8;
   try {
     const o = AC.createOscillator(), g = AC.createGain(), now = AC.currentTime;
     o.type = type; o.frequency.setValueAtTime(f, now);
@@ -108,6 +118,28 @@ function sfx(f, d = 0.1, type = 'square', slide = 0, vol = 0.05) {
     o.connect(g); g.connect(AC.destination); o.start(); o.stop(now + d);
   } catch (e) { }
 }
+
+// ---------- музыка: файлы лежат в папке music/. Сцена сама говорит, что должно играть (свойство music),
+// а если не говорит — продолжает играть то, что играло. Смена трека — плавная.
+const ZONE_MUSIC = ['Odessa', 'Gaza', 'Israel', 'MrDrNose Boss', 'BearBO Boss', 'Synagogue', 'Valve Server', 'Backrooms'];
+const MUS = {};
+let musWant = null, musDuck = 1;
+function musEl(n) {
+  if (!MUS[n]) { const a = new Audio('music/' + encodeURIComponent(n) + '.mp3'); a.loop = true; a.preload = 'auto'; a.volume = 0; MUS[n] = a; }
+  return MUS[n];
+}
+function musicTick() {
+  const m = scene && scene.music;
+  if (typeof m === 'string') musWant = m;
+  if (musReady && musWant) musEl(musWant);
+  for (const n in MUS) {
+    const a = MUS[n], target = n === musWant && musReady ? SET.music / 10 * 0.8 * musDuck : 0;
+    a.volume = clamp(a.volume + clamp(target - a.volume, -0.03, 0.03), 0, 1);
+    if (target > 0) { if (a.paused && !(a.retry > frame)) { const r = a.play(); if (r && r.catch) r.catch(() => { a.retry = frame + 60; }); } }
+    else if (!a.paused && a.volume === 0) a.pause();
+  }
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) for (const n in MUS) MUS[n].pause(); });
 
 // ---------- ввод
 const keys = { left: 0, right: 0, jump: 0, down: 0 };
@@ -196,7 +228,14 @@ fsBtn.addEventListener('click', e => { e.preventDefault(); toggleFs(); fsBtn.blu
 for (const n of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(n, () => { fsBtn.classList.toggle('on', fsOn()); padRelease(); });
 
 // ---------- сохранение
-function save(n) { try { localStorage.setItem('holos_lvl', String(n)); } catch (e) { } }
+// Хардкор (HC): одно сердце, ни одной флешки, ни одного чекпоинта — упал в яму значит умер, смерть возвращает на 1 уровень,
+// прогресс обычной игры не трогается. Запоминается только рекорд (самый дальний уровень) и факт прохождения.
+let HC = false;
+const hcBest = () => { try { return clamp(parseInt(localStorage.getItem('holos_hc')) || 0, 0, LAST); } catch (e) { return 0; } };
+const hcDone = () => { try { return localStorage.getItem('holos_hc_win') === '1'; } catch (e) { return false; } };
+function save(n) {
+  try { if (HC) { if (n > hcBest()) localStorage.setItem('holos_hc', String(n)); } else localStorage.setItem('holos_lvl', String(n)); } catch (e) { }
+}
 function load() { try { return clamp(parseInt(localStorage.getItem('holos_lvl')) || 1, 1, LAST); } catch (e) { return 1; } }
 
 // ---------- зоны и сюжет
@@ -237,12 +276,12 @@ const END_TEXT = ['Нос повержен.\n\nХолос узнаёт всю п
 let frame = 0, scene = null, L = null, P = null, shots = [], parts = [], safe = null, shake = 0;
 
 // ---------- построение уровней
-const SIZES = { y: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26],
+const SIZES = { y: [14, 16], y2: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26],
   fat: [16, 18], ari: [16, 18], bar: [22, 20], alt: [14, 18], poc: [16, 20], tel: [10, 12], ban: [24, 12], ano: [40, 16], duo: [12, 18],
   mak: [16, 24], mk: [16, 24], pol: [12, 18], ros: [22, 15], laa: [16, 18], vlad: [16, 22] };
 // имена над особыми врагами (показываются по-русски); телефонных мошенников больше нет — теперь это Шайтаны
 // (запасной вариант игры слов: 'МОШОННИКИ')
-const NAMES = { fat: 'ДиаблоФАТ', ari: 'Арирали', bar: 'Баратрум', alt: 'Сэм Альтман', poc: 'Опасный Поцык', tel: 'ШАЙТАНЫ', ban: 'Фейл2бан', ano: 'Анонимус',
+const NAMES = { y2: 'ЯРОШ С КУБАМИ', fat: 'ДиаблоФАТ', ari: 'Арирали', bar: 'Баратрум', alt: 'Сэм Альтман', poc: 'Опасный Поцык', tel: 'ШАЙТАНЫ', ban: 'Фейл2бан', ano: 'Анонимус',
   mak: 'Махито', ros: 'Ростик', laa: 'лааадно', vlad: 'Влад' };
 // какие новые враги встречаются на уровне (первый раз каждый гарантированно появляется)
 const POOL = {
@@ -259,6 +298,8 @@ function ent(t, x, y, extra) {
 }
 function buildLevel(n) {
   const R = rng(1000 + n * 77), ri = (a, b) => a + Math.floor(R() * (b - a + 1));
+  // начиная с Газы часть Ярошей — «башеры» с жёлтыми кубами (выбор не трогает генератор случайных чисел, поэтому раскладка уровней прежняя)
+  const yk = () => n >= 4 && hash(x, n + 5) < 0.4 ? 'y2' : 'y';
   const dn = Math.min(n, 12), pool = POOL[n] || [];   // сложность растёт до 12-го уровня, дальше держится
   const W = 80 + dn * 9;
   const g = [...Array(H)].map(() => Array(W).fill('.'));
@@ -327,8 +368,8 @@ function buildLevel(n) {
       flat(2);
       if (R() < 0.4) {
         g[H - gh - 3][x] = '='; g[H - gh - 3][x + 1] = '=';
-        ents.push(ent('y', x * T + 9, (H - gh - 3) * T - 16, { cd: 60 }));
-      } else ents.push(ent('y', x * T + 1, top() - 16, { cd: 60 }));
+        ents.push(ent(yk(), x * T + 9, (H - gh - 3) * T - 16, { cd: 60 }));
+      } else ents.push(ent(yk(), x * T + 1, top() - 16, { cd: 60 }));
       flat(ri(4, 5));
     } else if (r < pDyn) {
       flat(2); const a = x; flat(ri(7, 9));
@@ -343,7 +384,8 @@ function buildLevel(n) {
     else flat(ri(3, 6));
     sinceFlash += x - x0;
     if (sinceFlash > 26 + Math.min(dn, 8) * 2 && g[H - gh][x - 2] === '#' && g[H - gh - 1][x - 2] === '.') {
-      ents.push(ent('f', (x - 2) * T + 4, top() - 30)); sinceFlash = 0;
+      if (!HC) ents.push(ent('f', (x - 2) * T + 4, top() - 30));
+      sinceFlash = 0;
     }
   }
   while (x < W) col(x++, gh);
@@ -374,10 +416,13 @@ function buildArena(n) {
 function startLevel(n) {
   if (n <= LAST) save(n);
   L = n === LAST || n === SALT ? buildArena(n) : buildLevel(n);
-  P = { x: 24, y: L.spawnY, w: 8, h: 13, vx: 0, vy: 0, hp: 3, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null, stop: 0, grace: 0 };
+  const hp = HC ? 1 : 3;
+  P = { x: 24, y: L.spawnY, w: 8, h: 13, vx: 0, vy: 0, hp, max: hp, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null, stop: 0, bash: 0, grace: 0 };
   safe = { x: P.x, y: P.y }; shots = []; parts = []; shake = 0;
   scene = playScene;
 }
+// после смерти: обычная игра — тот же уровень заново, хардкор — весь забег с первого уровня
+const respawn = n => startLevel(HC ? 1 : n);
 function gotoLevel(n) {
   if (INTRO[n]) scene = cardScene(INTRO[n], () => startLevel(n), zoneOf(n)); else startLevel(n);
 }
@@ -424,6 +469,13 @@ function hurt(n, c) {
   P.hp -= n; P.inv = 90; P.vy = -3.5; shake = 6; sfx(180, 0.2, 'sawtooth', -100, 0.07);
   if (P.hp <= 0) die(c);
 }
+// «баш» (как у Skull Basher): куб Яроша с шансом 17% оглушает игрока на 0,5 с — управление отключено, бить по нему продолжают
+const BASH_CHANCE = 0.17, BASH_TIME = 30;
+function bash() {
+  P.bash = BASH_TIME; P.vx = 0; shake = Math.max(shake, 8);
+  L.pops.push({ x: P.x - 6, y: P.y - 16, s: 'БАШ!', t: 40 });
+  sfx(95, 0.3, 'sawtooth', -40, 0.09); sfx(1400, 0.12, 'square', -900, 0.05);
+}
 function die(c) {
   if (scene !== playScene) return;
   sfx(300, 0.5, 'sawtooth', -260, 0.08);
@@ -432,7 +484,7 @@ function die(c) {
 function onFlash(e) {
   sfx(900, 0.12, 'square', 600);
   if (L.boss) shots.push({ k: 'usb', x: e.x, y: e.y, sx: e.x, sy: e.y, t: 0, w: 8, h: 12, vx: 0, vy: 0 });
-  else { P.hp = Math.min(3, P.hp + 1); burst(e.x + 4, e.y + 6, '#2ecc71', 10); L.pops.push({ x: e.x - 4, y: e.y - 8, s: '+1', t: 40 }); }
+  else { P.hp = Math.min(P.max, P.hp + 1); burst(e.x + 4, e.y + 6, '#2ecc71', 10); L.pops.push({ x: e.x - 4, y: e.y - 8, s: '+1', t: 40 }); }
 }
 function hitBoss() {
   const b = L.boss;
@@ -440,7 +492,7 @@ function hitBoss() {
   if (b.dead) return;
   b.hp--; b.flash = 14; shake = 5; sfx(220, 0.25, 'sawtooth', -120, 0.08); burst(b.x + b.w / 2, b.y + b.h / 2, '#19ff9c', 12);
   if (b.hp <= 0) { b.dead = 1; return; }
-  if (b.hp === 6 || b.hp === 3) { P.hp = Math.min(3, P.hp + 1); L.banner = [b.hp === 6 ? 'ФАЗА 2: KERNEL PANIC' : 'ФАЗА 3: SEGFAULT', 130]; }
+  if (b.hp === 6 || b.hp === 3) { P.hp = Math.min(P.max, P.hp + 1); L.banner = [b.hp === 6 ? 'ФАЗА 2: KERNEL PANIC' : 'ФАЗА 3: SEGFAULT', 130]; }
 }
 function spawnFlash(b) {
   if (L.ents.some(e => e.t === 'f' && !e.dead) || shots.some(s => s.k === 'usb')) return;
@@ -843,6 +895,7 @@ function drawPlat(pl, Z) {
 // одна сущность (враг, флешка, мевли, портал) в её текущей позе
 function drawEnt(e) {
   if (e.t === 'y') spr(IMG.yarosh, e.x, e.y - (e.anim ? 2 : 0), e.face < 0);
+  else if (e.t === 'y2') spr(IMG.yarosh2, e.x, e.y - (e.anim ? 2 : 0), e.face < 0);
   else if (e.t === 'd') {
     spr(IMG.dynex, e.x, e.y + (e.warn > 0 ? 0 : Math.floor(frame / (e.ag ? 4 : 8)) % 2), e.dir < 0);
     if (e.ag) text('!', e.x + 8, e.y - 11, '#ff3b3b', 8, 'center');
@@ -905,13 +958,17 @@ function drawEnt(e) {
 
 // ---------- игровая сцена
 const playScene = {
+  pausable: true,
+  get music() { return ZONE_MUSIC[L.zone]; },
   update() {
     if (L.custom && L.custom.update()) return;   // свой уровень из конструктора: выход, таймер
     L.t++;
     for (const pl of L.plats) { pl.x += pl.vx; if (pl.x < pl.a) { pl.x = pl.a; pl.vx = Math.abs(pl.vx); } if (pl.x > pl.b) { pl.x = pl.b; pl.vx = -Math.abs(pl.vx); } }
     if (P.on) { moveX(P, P.on.vx); P.on = null; }
     // игрок
-    const frozen = P.stop > 0; if (frozen) { P.stop--; P.grace = 60; } else if (P.grace > 0) P.grace--;   // Почик остановил игрока: управление отключено
+    const held = P.stop > 0; if (held) { P.stop--; P.grace = 60; } else if (P.grace > 0) P.grace--;   // Почик остановил игрока: управление отключено
+    const bashed = P.bash > 0; if (bashed) P.bash--;   // башу не мешает получать урон — в отличие от разговора с Почиком
+    const frozen = held || bashed;
     const ax = frozen ? 0 : keys.right - keys.left;
     P.vx += (ax * 2 - P.vx) * 0.3; if (Math.abs(P.vx) < 0.05) P.vx = 0;
     if (ax) P.face = ax;
@@ -948,13 +1005,14 @@ const playScene = {
     for (const e of L.ents) {
       if (e.dead) continue;
       const dx = (P.x + P.w / 2) - (e.x + e.w / 2), dy = (P.y + P.h / 2) - (e.y + e.h / 2);
-      if (e.t === 'y') {
+      if (e.t === 'y' || e.t === 'y2') {
         e.face = dx < 0 ? -1 : 1;
         if (e.anim) e.anim--;
         if (Math.abs(dx) < 170 && Math.abs(dy) < 120 && --e.cd <= 0) {
-          // целится не туда, где игрок сейчас, а туда, где он окажется, пока бутылка летит
+          // целится не туда, где игрок сейчас, а туда, где он окажется, пока бутылка (или куб) летит
           const v = lobAim(e.x + 5 + 2.5, e.y + 4, 0.15, 2.6, 40, 62);
-          shots.push({ k: 'b', x: e.x + 5, y: e.y, vx: v.vx, vy: v.vy, g: 0.15, w: 5, h: 8, rot: 0 });
+          if (e.t === 'y2') shots.push({ k: 'cube', x: e.x + 4, y: e.y - 2, vx: v.vx, vy: v.vy, g: 0.15, w: 7, h: 7, rot: 0 });
+          else shots.push({ k: 'b', x: e.x + 5, y: e.y, vx: v.vx, vy: v.vy, g: 0.15, w: 5, h: 8, rot: 0 });
           e.cd = L.cdBase + Math.random() * 30; e.anim = 12; sfx(300, 0.08, 'triangle', 200, 0.04);
         }
         if (ov(P, e, 3)) hurt(1, 'yarosh');
@@ -1016,12 +1074,16 @@ const playScene = {
       s.vy += s.g || 0; s.x += s.vx; s.y += s.vy; s.rot = (s.rot || 0) + 0.25;
       const ground = s.k === 'wave' || s.k === 'sweep';
       if (!ground && tileAt(s.x + s.w / 2, s.y + s.h / 2)) {
-        burst(s.x, s.y, { b: '#c05f10', crystal: '#f7f1fa', fire: '#ff8a2a', tok: '#4aa3ff', stump: '#8a5a2c', uwu: '#ff7aa8', flag: '#ffffff' }[s.k] || '#ff4fd8', s.k === 'stump' ? 14 : 5);
+        burst(s.x, s.y, { cube: '#ffd23e', b: '#c05f10', crystal: '#f7f1fa', fire: '#ff8a2a', tok: '#4aa3ff', stump: '#8a5a2c', uwu: '#ff7aa8', flag: '#ffffff' }[s.k] || '#ff4fd8', s.k === 'stump' ? 14 : 5);
         if (s.k === 'b') sfx(1200, 0.05, 'square', -600, 0.03);
         if (s.k === 'stump') { shake = Math.max(shake, 5); sfx(70, 0.3, 'sawtooth', -20, 0.09); }
         return false;
       }
-      if (ov(P, s)) { hurt(1, s.k); if (!ground) return false; }
+      if (ov(P, s)) {
+        const hp = P.hp; hurt(1, s.k);
+        if (s.k === 'cube' && P.hp < hp && P.hp > 0 && Math.random() < BASH_CHANCE) bash();   // удар прошёл — с шансом ещё и оглушает
+        if (!ground) return false;
+      }
       return s.x > -40 && s.x < L.W * T + 40 && s.y < H * T + 40 && s.y > -300;
     });
     for (const p of parts) { p.x += p.vx; p.y += p.vy; p.vy += 0.12; p.life--; }
@@ -1036,7 +1098,7 @@ const playScene = {
     const Z = ZONES[L.zone], cam = Math.round(L.cam);
     drawBG(L.zone, L.cam);
     ctx.save();
-    ctx.translate(-cam + (shake ? Math.round((Math.random() - 0.5) * shake) : 0), 4);
+    ctx.translate(-cam + (shake && SET.shake ? Math.round((Math.random() - 0.5) * shake) : 0), 4);
     const tx0 = Math.max(0, Math.floor(cam / T)), tx1 = Math.min(L.W - 1, tx0 + 21);
     drawTiles(L.g, Z, tx0, tx1);
     if (L.secret) for (let i = 0; i < 6; i++) {
@@ -1085,6 +1147,7 @@ const playScene = {
     // снаряды
     for (const s of shots) {
       if (s.k === 'b') { ctx.save(); ctx.translate(Math.round(s.x + 2), Math.round(s.y + 5)); ctx.rotate(s.rot); ctx.drawImage(IMG.bottle, -2, -5); ctx.restore(); }
+      else if (s.k === 'cube') { ctx.save(); ctx.translate(Math.round(s.x + 3.5), Math.round(s.y + 3.5)); ctx.rotate(s.rot); ctx.drawImage(IMG.cube, -3.5, -3.5); ctx.restore(); }
       else if (s.k === 'usb') spr(IMG.flash, s.x, s.y);
       else if (s.k === 'fire') { ctx.fillStyle = '#e03020'; ctx.fillRect(s.x, s.y + 1, 7, 5); ctx.fillRect(s.x + 1, s.y, 5, 7); ctx.fillStyle = frame % 4 < 2 ? '#ffd23e' : '#ff8a2a'; ctx.fillRect(s.x + 2, s.y + 2, 3, 3); }
       else if (s.k === 'tok') { ctx.fillStyle = '#17161c'; ctx.fillRect(s.x - 1, s.y - 1, 8, 8); ctx.fillStyle = '#4aa3ff'; ctx.fillRect(s.x, s.y, 6, 6); ctx.fillStyle = '#fff'; ctx.fillRect(s.x + 1, s.y + 1, 2, 2); ctx.fillRect(s.x + 4, s.y + 4, 1, 1); }
@@ -1105,11 +1168,16 @@ const playScene = {
     }
     // игрок
     if (P.inv % 6 < 3) spr(IMG.holos, P.x - 3, P.y - 3 + (P.ground && Math.abs(P.vx) > 0.5 ? Math.floor(frame / 5) % 2 : 0), P.face < 0);
+    if (P.bash > 0) for (let i = 0; i < 3; i++) {   // звёздочки над головой оглушённого
+      const a = frame * 0.3 + i * 2.1; ctx.fillStyle = i % 2 ? '#fff' : '#ffd23e';
+      ctx.fillRect(Math.round(P.x + 4 + Math.cos(a) * 7), Math.round(P.y - 6 + Math.sin(a) * 2.5), 2, 2);
+    }
     for (const p of parts) { ctx.fillStyle = p.col; ctx.fillRect(p.x, p.y, 2, 2); }
     for (const p of L.pops) text(p.s, p.x, p.y, '#fff', 8);
     ctx.restore();
     // HUD
-    for (let i = 0; i < 3; i++) spr(i < P.hp ? IMG.heart : IMG.heartOff, 6 + i * 13, 6, false, 2);
+    for (let i = 0; i < P.max; i++) spr(i < P.hp ? IMG.heart : IMG.heartOff, 6 + i * 13, 6, false, 2);
+    if (HC && !L.custom) text('ХАРДКОР', 22, 8, '#ff5a5a', 6);
     if (b) {
       text(b.kind === 'nos' ? 'МРДРНОС' : 'ВЕДМЕДИК БО', 314, 5, '#fff', 6, 'right');
       box(214, 14, 100, 5, '#2b2a33', '#000');
@@ -1265,6 +1333,7 @@ function captchaScene() {
   let st = 0, t = 0, tries = 0;
   const b = { x: 60, y: 60, w: 200, h: 60 };
   return {
+    music: 'Menu',
     update() {
       t++;
       if (st === 0 && anyPressed && (!click || inside(click, b))) { st = 1; t = 0; sfx(600, 0.05); }
@@ -1289,31 +1358,131 @@ function captchaScene() {
 }
 
 // ---------- меню
-function titleScene() {
-  const saved = load();
-  const bNew = { x: 90, y: saved > 1 ? 118 : 104, w: 140, h: 18 }, bCont = { x: 90, y: 94, w: 140, h: 18 };
-  const bEd = { x: 90, y: bNew.y + 24, w: 140, h: 18 };
-  let t = 0;
+// Универсальное меню-список (пауза, настройки). items() — пункты {s, f, adj(k), off, sure}: f — действие,
+// adj — изменить значение (← → или клик по левой/правой половине), sure — подпись, которую показать перед повторным
+// нажатием (защита от случайного «выйти» и «сбросить»). back — выход (Esc).
+function listMenu(o) {
+  let sel = 0, armed = -1;
+  const MH = 15, MW = o.w || 210, X = Math.round((VW - MW) / 2);
+  const geo = n => { const top = Math.round((VH - n * MH) / 2) + 6; return { top, y: i => top + i * MH }; };
+  const act = (items, i, k) => {
+    const it = items[i]; if (!it || it.off) return;
+    if (it.adj) { armed = -1; it.adj(k); sfx(600, 0.04, 'square', 0, 0.03); return; }
+    if (it.sure && armed !== i) { armed = i; sfx(400, 0.05, 'square', 0, 0.03); return; }
+    armed = -1; sfx(600, 0.04, 'square', 0, 0.03); it.f();
+  };
   return {
+    pad: 'none',
+    music: o.music,
+    update() {
+      const items = o.items(), n = items.length, g = geo(n), prev = sel;
+      if (codes.has('Escape') || (o.close && o.close.some(c => codes.has(c)))) { o.back(); return; }
+      if (codes.has('ArrowUp') || codes.has('KeyW')) sel = (sel + n - 1) % n;
+      if (codes.has('ArrowDown') || codes.has('KeyS')) sel = (sel + 1) % n;
+      if (sel !== prev) armed = -1;
+      if (codes.has('ArrowLeft') || codes.has('KeyA')) { if (items[sel].adj) act(items, sel, -1); }
+      if (codes.has('ArrowRight') || codes.has('KeyD')) { if (items[sel].adj) act(items, sel, 1); }
+      if (codes.has('Enter') || codes.has('Space') || codes.has('KeyZ')) { act(items, sel, 1); return; }
+      if (click) {
+        const i = Math.floor((click.y - g.top) / MH);
+        if (click.x >= X && click.x < X + MW && i >= 0 && i < n) { sel = i; act(items, i, click.x < VW / 2 ? -1 : 1); }
+      }
+    },
+    draw() {
+      o.bg();
+      ctx.fillStyle = '#000000b0'; ctx.fillRect(0, 0, VW, VH);
+      const items = o.items(), n = items.length, g = geo(n);
+      box(X - 10, g.top - 26, MW + 20, n * MH + 44, '#17161c', o.col || '#fff');
+      text(o.title, 160, g.top - 18, o.col || '#fff', 8, 'center');
+      items.forEach((it, i) => {
+        const y = g.y(i), on = i === sel;
+        if (on) { ctx.fillStyle = '#2b2a33'; ctx.fillRect(X, y, MW, MH - 1); }
+        text(armed === i && it.sure ? it.sure : it.s, 160, y + 4, it.off ? '#6b6a76' : armed === i ? '#ff7a6a' : on ? '#fff' : '#c9c9d4', 6, 'center');
+      });
+      text('↑ ↓ ВЫБОР   ← → МЕНЯТЬ   ESC НАЗАД', 160, g.top + n * MH + 4, '#6b6a76', 6, 'center');
+    },
+  };
+}
+
+// ---------- настройки. back — функция, возвращающая в то место, откуда пришли (в меню или в паузу)
+function settingsScene(back, bg) {
+  const lvl = v => v ? v * 10 + '%' : 'ВЫКЛ';
+  return listMenu({
+    title: 'НАСТРОЙКИ', bg: bg || (() => drawBG(3, frame * 0.3)), back,
+    items: () => [
+      { s: '← МУЗЫКА: ' + lvl(SET.music) + ' →', adj: k => { SET.music = clamp(SET.music + k, 0, 10); saveSet(); } },
+      { s: '← ЗВУКИ: ' + lvl(SET.sfx) + ' →', adj: k => { SET.sfx = clamp(SET.sfx + k, 0, 10); saveSet(); sfx(520, 0.1, 'square', 300, 0.05); } },
+      { s: '← ТРЯСКА ЭКРАНА: ' + (SET.shake ? 'ВКЛ' : 'ВЫКЛ') + ' →', adj: () => { SET.shake = SET.shake ? 0 : 1; saveSet(); shake = 6; } },
+      ...(fsReq ? [{ s: 'ПОЛНЫЙ ЭКРАН: ' + (fsOn() ? 'ВКЛ' : 'ВЫКЛ'), f: toggleFs }] : []),
+      { s: 'СБРОСИТЬ ПРОГРЕСС', sure: 'ТОЧНО? ВСЁ ПРОПАДЁТ', f: () => { try { for (const k of ['holos_lvl', 'holos_hc', 'holos_hc_win']) localStorage.removeItem(k); } catch (e) { } } },
+      { s: 'НАЗАД', f: back },
+    ],
+  });
+}
+
+// ---------- пауза. Работает в любой сцене с флагом pausable (уровни, заплыв, паспорт): Esc, P или кнопка II
+const PAUSE_BTN = { x: 128, y: 3, w: 16, h: 12 };
+function drawPauseBtn() {
+  box(PAUSE_BTN.x, PAUSE_BTN.y, PAUSE_BTN.w, PAUSE_BTN.h, '#17161ccc', '#fff');
+  ctx.fillStyle = '#fff'; ctx.fillRect(PAUSE_BTN.x + 5, PAUSE_BTN.y + 3, 2, 6); ctx.fillRect(PAUSE_BTN.x + 9, PAUSE_BTN.y + 3, 2, 6);
+}
+function pauseScene(prev) {
+  // выйти в меню: со своего уровня — туда, откуда его запустили (редактор, список уровней), иначе — в главное меню
+  const quit = () => { if (prev === playScene && L.custom) L.custom.exit(); else scene = titleScene(); };
+  let me;
+  const bg = () => prev.draw();
+  const resume = () => { scene = prev; musDuck = 1; };
+  me = listMenu({
+    title: 'ПАУЗА', bg, back: resume, close: ['KeyP'],
+    items: () => [
+      { s: 'ПРОДОЛЖИТЬ', f: resume },
+      { s: 'НАСТРОЙКИ', f: () => { scene = settingsScene(() => { scene = me; }, bg); } },
+      { s: 'ВЫЙТИ В МЕНЮ', sure: HC && !(prev === playScene && L.custom) ? 'ТОЧНО? ЗАБЕГ ПРОПАДЁТ' : 'ТОЧНО ВЫЙТИ?', f: () => { musDuck = 1; quit(); } },
+    ],
+  });
+  musDuck = 0.35;   // на паузе музыка тише
+  return me;
+}
+
+function titleScene() {
+  HC = false;
+  const saved = load(), best = hcBest();
+  const items = [];
+  if (saved > 1) items.push({ s: `ПРОДОЛЖИТЬ: УР.${saved}`, f: () => gotoLevel(saved) });
+  items.push({ s: 'НОВАЯ ИГРА', f: () => gotoLevel(1) });
+  items.push({ s: 'ХАРДКОР' + (hcDone() ? ' (ПРОЙДЕН)' : best ? ` (РЕКОРД: УР.${best})` : ''), col: '#ff5a5a', f: () => {
+    HC = true;
+    scene = cardScene(['ХАРДКОР\n\nОдно сердце. Ни одной флешки. Яма — смерть.\n\nНикаких чекпоинтов: умер — и всё с первого уровня. Обычное сохранение не трогается.'], () => gotoLevel(1), 3);
+  } });
+  items.push({ s: 'КОНСТРУКТОР (E)', col: '#ffd23e', f: () => { scene = makerMenuScene(); } });
+  items.push({ s: 'НАСТРОЙКИ', f: () => { scene = settingsScene(() => { scene = titleScene(); }); } });
+  const BW = 160, BH = 15, X = (VW - BW) / 2, Y0 = 74, STEP = 17;
+  let t = 0, sel = 0;
+  return {
+    pad: 'none',
+    music: 'Menu',
     update() {
       t++;
-      if (t >= 15 && codes.has('KeyE')) { scene = makerMenuScene(); return; }
-      if (!anyPressed || t < 15) return;
-      if (click) { if (inside(click, bNew)) gotoLevel(1); else if (saved > 1 && inside(click, bCont)) gotoLevel(saved); else if (inside(click, bEd)) scene = makerMenuScene(); }
-      else gotoLevel(saved > 1 ? saved : 1);
+      if (t < 15) return;
+      if (codes.has('KeyE')) { scene = makerMenuScene(); return; }
+      const n = items.length;
+      if (codes.has('ArrowUp') || codes.has('KeyW')) sel = (sel + n - 1) % n;
+      if (codes.has('ArrowDown') || codes.has('KeyS')) sel = (sel + 1) % n;
+      if (codes.has('Enter') || codes.has('Space') || codes.has('KeyZ')) { items[sel].f(); return; }
+      if (click) { const i = Math.floor((click.y - Y0) / STEP); if (i >= 0 && i < n && click.y - Y0 - i * STEP < BH && click.x >= X && click.x < X + BW) { sel = i; items[i].f(); } }
     },
     draw() {
       drawBG(3, 0);
-      text('ХОЛОС', 160, 22, '#fff', 24, 'center');
-      text('ЯДРО 8', 160, 52, '#19ff9c', 16, 'center');
+      text('ХОЛОС', 160, 20, '#fff', 24, 'center');
+      text('ЯДРО 8', 160, 49, '#19ff9c', 16, 'center');
       spr(IMG.holos, 30, 100 + Math.sin(frame * 0.08) * 3, false, 3);
       spr(IMG.nos, 250, 90 + Math.cos(frame * 0.06) * 4, true, 2);
-      if (saved > 1) { box(bCont.x, bCont.y, bCont.w, bCont.h, '#19ff9c', '#fff'); text(`ПРОДОЛЖИТЬ: УР.${saved}`, 160, bCont.y + 6, '#17161c', 6, 'center'); }
-      box(bNew.x, bNew.y, bNew.w, bNew.h, saved > 1 ? '#2b2a33' : '#19ff9c', '#fff');
-      text('НОВАЯ ИГРА', 160, bNew.y + 6, saved > 1 ? '#fff' : '#17161c', 6, 'center');
-      box(bEd.x, bEd.y, bEd.w, bEd.h, '#2b2a33', '#ffd23e');
-      text('КОНСТРУКТОР (E)', 160, bEd.y + 6, '#ffd23e', 6, 'center');
-      text('← → БЕЖАТЬ   ↑ / ПРОБЕЛ ПРЫЖОК', 160, 168, '#9a9aa6', 6, 'center');
+      items.forEach((it, i) => {
+        const y = Y0 + i * STEP, on = i === sel;
+        box(X, y, BW, BH, on ? '#19ff9c' : '#2b2a33', on ? '#fff' : it.col || '#9a9aa6');
+        text(it.s, 160, y + 5, on ? '#17161c' : it.col || '#fff', 6, 'center');
+      });
+      text('↑ ↓ ВЫБОР   ENTER   В ИГРЕ: ESC ПАУЗА', 160, 168, '#9a9aa6', 6, 'center');
     },
   };
 }
@@ -1343,6 +1512,7 @@ function cardScene(pages, done, z = 3) {
 }
 
 // ---------- поражение: Ведмедик Бо
+const again = () => HC ? 'ХАРДКОР: НАЧНЁШЬ С 1 УРОВНЯ' : 'НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА';
 function bubble(x, y, w, lines) {
   box(x, y, w, lines.length * 12 + 8, '#fff', '#17161c');
   lines.forEach((l, i) => text(l, x + w / 2, y + 6 + i * 12, '#17161c', 8, 'center', false));
@@ -1355,7 +1525,7 @@ function deathScene(n, c) {
       t++;
       if (t === 62) sfx(90, 0.25, 'sawtooth', 0, 0.08);
       if (t === 105) sfx(200, 0.3, 'square', -120);
-      if (t > 150 && anyPressed) startLevel(n);
+      if (t > 150 && anyPressed) respawn(n);
     },
     draw() {
       ctx.fillStyle = '#120a0a'; ctx.fillRect(0, 0, VW, VH);
@@ -1365,7 +1535,7 @@ function deathScene(n, c) {
       if (t < 60) { const k = t / 60, mx = dyn ? 40 : 42, my = dyn ? 40 : 50; spr(IMG.holos, 40 + (bx + mx - 40) * k, 120 + (by + my - 120) * k - Math.sin(k * 3.14) * 40, false, 2 - k); }
       if (c === 'dynex') text('ДЫНЕКС ПОРВАЛ ТУЗА', 160, 8, '#ff5a5a', 8, 'center');
       if (t > 100) bubble(16, 60, 150, ['ФУ БЛЯ,', 'НЕВКУСНО']);
-      if (t > 150 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА', 160, 166, '#9a9aa6', 6, 'center');
+      if (t > 150 && frame % 60 < 40) text(again(), 160, 166, '#9a9aa6', 6, 'center');
     },
   };
 }
@@ -1397,7 +1567,7 @@ function duoDeathScene(n, who) {
       if (frame % 5 === 0) drips.push({ x: 236 + Math.random() * 40, y: 92 + Math.random() * 26, vy: 0.2, c: Math.random() < 0.5 ? '#2ecc71' : '#20a04a' });
       for (const d of drips) { d.vy += 0.08; d.y += d.vy; }
       while (drips.length && drips[0].y > 160) drips.shift();
-      if (t > 170 && anyPressed) startLevel(n);
+      if (t > 170 && anyPressed) respawn(n);
     },
     draw() {
       kremlinBG();
@@ -1429,7 +1599,7 @@ function duoDeathScene(n, who) {
         if (t > 120) bubble(8, 40, 128, ['НЕ ЗНАЮ', 'ТАКОГО.']);
         text('НАВАЛЬНЫЙ СНЯЛ РАССЛЕДОВАНИЕ', 160, 8, '#2ecc71', 8, 'center');
       }
-      if (t > 170 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА', 160, 170, '#9a9aa6', 6, 'center');
+      if (t > 170 && frame % 60 < 40) text(again(), 160, 170, '#9a9aa6', 6, 'center');
     },
   };
 }
@@ -1437,8 +1607,10 @@ function duoDeathScene(n, who) {
 // ---------- концовки
 function endingScene() {
   let t = 0;
+  if (HC) { try { localStorage.setItem('holos_hc_win', '1'); } catch (e) { } }
   const stars = [...Array(70)].map((_, i) => ({ x: hash(i, 1) * VW, y: hash(i, 2) * VH, s: 0.3 + hash(i, 3) * 1.5 }));
   return {
+    music: 'Final',
     update() {
       t++;
       if (t === 90) sfx(200, 1.2, 'triangle', 1400, 0.08);
@@ -1466,6 +1638,7 @@ function endingScene() {
         text('СФЕРА ХОЛОСА', 160, 16, '#fff', 8, 'center');
         text('ВЫШЛА НА ОРБИТУ', 160, 30, '#fff', 8, 'center');
         if (t > 420) text('КОНЕЦ', 160, 52, '#19ff9c', 16, 'center');
+        if (t > 450 && HC) text('ХАРДКОР ПРОЙДЕН!', 160, 74, '#ff5a5a', 8, 'center');
         if (t > 520 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ВЕРНУТЬСЯ В МЕНЮ', 160, 168, '#9a9aa6', 6, 'center');
       }
       if (t < 110) { ctx.fillStyle = `rgba(255,255,255,${(110 - t) / 20})`; ctx.fillRect(0, 0, VW, VH); }
@@ -1512,7 +1685,7 @@ function swimScene(done) {
     if (two) mines.push({ x: x + R() * 16 - 8, y0: y1 + 64 + R() * 16, ph: R() * 6, ax: R() < 0.35 ? 20 : 0 });
   }
   for (const bx of [520, 980, 1440, 1900, 2360]) boats.push({ x0: bx - 140, x1: bx + 140, x: bx, dir: 1, cd: 70, near: false });
-  const S = { x: 24, y: 100, vx: 0, vy: 0, hp: 3, inv: 0, face: 1 };
+  const S = { x: 24, y: 100, vx: 0, vy: 0, hp: HC ? 1 : 3, max: HC ? 1 : 3, inv: 0, face: 1 };
   let st = 0, t = 0, et = 0, shk = 0, why = '';
   const mpos = m => [m.x + Math.sin(t * 0.03 + m.ph) * m.ax, m.y0 + Math.sin(t * 0.05 + m.ph) * 8];
   const boom = (x, y, n) => { for (let i = 0; i < n; i++) fx.push({ x, y, vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3, life: 18 + Math.random() * 14, col: ['#ffd23e', '#ff8a2a', '#fff'][i % 3] }); };
@@ -1522,14 +1695,14 @@ function swimScene(done) {
     if (S.hp <= 0) { st = 2; et = 0; }
   };
   return {
-    pad: 'swim',
+    pad: 'swim', pausable: true, music: 'Odessa',
     dbg: () => ({ S, mines, boats, charges, blasts, t, mpos, WW, st }), // для автотестов
     update() {
       t++; if (shk) shk--;
       for (const p of fx) { p.x += p.vx; p.y += p.vy; p.life--; }
       for (let i = fx.length; i--;) if (fx[i].life <= 0) fx.splice(i, 1);
       if (st === 1) { if (++et > 110) done(); return; }
-      if (st === 2) { et++; if (et > 60 && anyPressed) scene = swimScene(done); return; }
+      if (st === 2) { et++; if (et > 60 && anyPressed) { if (HC) startLevel(1); else scene = swimScene(done); } return; }
       const ax = keys.right - keys.left, ay = keys.down - keys.jump;
       S.vx += (ax * 1.7 - S.vx) * 0.12; S.vy += (ay * 1.7 - S.vy) * 0.12;
       if (ax) S.face = ax;
@@ -1557,7 +1730,7 @@ function swimScene(done) {
       if (S.x >= WW - 60) { st = 1; et = 0; sfx(600, 0.5, 'triangle', 600, 0.07); }
     },
     draw() {
-      const cam = Math.round(clamp(S.x - 110, 0, WW - VW)), sx = shk ? Math.round((Math.random() - 0.5) * shk) : 0;
+      const cam = Math.round(clamp(S.x - 110, 0, WW - VW)), sx = shk && SET.shake ? Math.round((Math.random() - 0.5) * shk) : 0;
       // небо и далёкие берега
       const sky = ctx.createLinearGradient(0, 0, 0, SURF); sky.addColorStop(0, '#7cc6ee'); sky.addColorStop(1, '#d6efff');
       ctx.fillStyle = sky; ctx.fillRect(0, 0, VW, SURF + 2);
@@ -1607,7 +1780,7 @@ function swimScene(done) {
       for (const p of fx) { ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2); }
       ctx.restore();
       // интерфейс
-      for (let i = 0; i < 3; i++) spr(i < S.hp ? IMG.heart : IMG.heartOff, 6 + i * 13, 6, false, 2);
+      for (let i = 0; i < S.max; i++) spr(i < S.hp ? IMG.heart : IMG.heartOff, 6 + i * 13, 6, false, 2);
       text('ДО БЕРЕГА', 314, 5, '#17161c', 6, 'right');
       box(214, 14, 100, 5, '#2b2a33', '#000'); ctx.fillStyle = '#19ff9c'; ctx.fillRect(214, 14, 100 * clamp(S.x / (WW - 60), 0, 1), 5);
       if (t < 200 && !st) text('ПЛЫВИ ВПРАВО. БЕРЕГОВАЯ ОХРАНА ДРОЖИТ.', 160, 28, '#17161c', 6, 'center');
@@ -1615,7 +1788,7 @@ function swimScene(done) {
       if (st === 2) {
         ctx.fillStyle = '#000000b0'; ctx.fillRect(0, 50, VW, 70);
         text(why, 160, 62, '#ff5a5a', 8, 'center'); text('ХОЛОС ИДЁТ КО ДНУ.', 160, 80, '#fff', 8, 'center');
-        if (et > 60 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА', 160, 100, '#9a9aa6', 6, 'center');
+        if (et > 60 && frame % 60 < 40) text(again(), 160, 100, '#9a9aa6', 6, 'center');
       }
     },
   };
@@ -1670,14 +1843,14 @@ function passportScene(done) {
   };
   const change = (r, d) => { r.cur = (r.cur + d + r.opts.length) % r.opts.length; sfx(500 + r.cur * 40, 0.04, 'square', 0, 0.03); };
   return {
-    pad: 'none',
+    pad: 'none', pausable: true, music: 'Papers PLease',
     rows, // для тестов
     update() {
       t++;
       if (st === 1) {
         et++;
         if (et === 18) sfx(ok ? 700 : 110, 0.3, ok ? 'triangle' : 'sawtooth', ok ? 500 : -60, 0.09);
-        if (et > 120) { if (ok) done(); else scene = failScene(msg, () => { scene = passportScene(done); }); }
+        if (et > 120) { if (ok) done(); else scene = failScene(msg, () => { if (HC) startLevel(1); else scene = passportScene(done); }); }
         return;
       }
       if (t > TIME) { submit('ВРЕМЯ ВЫШЛО.'); return; }
@@ -1749,7 +1922,7 @@ function failScene(reason, retry) {
       if (t > 20) { const ls = wrap(reason, 140, 8); bubble(100, 24, 160, ls); }
       if (t > 30 && t < 60) text('ЩЁЛК!', 190, 60, '#fff', 8, 'center');
       if (t > 70) { text('ХОЛОСУ СДЕЛАЛИ ОБРЕЗАНИЕ.', 160, 128, '#ff5a5a', 8, 'center'); text('ХОЛОС ПРОИГРАЛ.', 160, 142, '#fff', 8, 'center'); }
-      if (t > 160 && frame % 60 < 40) text('НАЖМИ, ЧТОБЫ ПОПРОБОВАТЬ СНОВА', 160, 166, '#9a9aa6', 6, 'center');
+      if (t > 160 && frame % 60 < 40) text(again(), 160, 166, '#9a9aa6', 6, 'center');
     },
   };
 }
@@ -1757,10 +1930,18 @@ function failScene(reason, retry) {
 // ---------- цикл
 scene = captchaScene();
 let last = 0, acc = 0;
-function tick() { scene.update(); jumpPressed = false; anyPressed = false; click = null; codes.clear(); frame++; }
+function tick() {
+  // пауза: Esc, P или кнопка II; вход в неё съедает нажатие, чтобы оно не попало в саму паузу
+  if (scene.pausable && (codes.has('Escape') || codes.has('KeyP') || (click && inside(click, PAUSE_BTN)))) {
+    scene = pauseScene(scene); sfx(300, 0.06, 'square', 0, 0.03);
+    click = null; anyPressed = false; jumpPressed = false; codes.clear();
+  }
+  scene.update(); musicTick(); jumpPressed = false; anyPressed = false; click = null; codes.clear(); frame++;
+}
 let padMode = null;
 function render() {
   ctx.setTransform(SC, 0, 0, SC, 0, 0); ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 1; scene.draw();
+  if (scene.pausable) drawPauseBtn();
   const m = scene.pad || '';
   if (m !== padMode) { padMode = m; pad.dataset.mode = m; padRelease(); }
 }
