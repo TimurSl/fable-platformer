@@ -882,7 +882,7 @@ const ENEMY = {
     if (--e.life <= 0 || e.y > H * T + 30) { e.dead = true; if (e.life <= 0) burst(e.x + 6, e.y + 9, '#4aa3ff', 10); return; }
     // Три фазы: рывок к игроку (быстро, но без руления) → тормозной путь юзом (очень длинный) → медленный разворот
     if (e.mode === undefined) { e.mode = 'run'; e.dir = e.face || 1; e.turn = 0; }
-    if (e.hold > 0) { e.hold--; e.vx *= 0.8; e.mode = 'turn'; e.turn = 40; }
+    if (e.hold > 0) { e.hold--; e.vx *= 0.8; }
     else if (e.mode === 'run') {
       e.vx += (e.dir * COP_RUN - e.vx) * 0.12; e.face = e.dir;
       if (dx * e.dir < -6) e.mode = 'brake';   // проскочил мимо игрока
@@ -904,7 +904,7 @@ const ENEMY = {
     if (ov(P, e, 3)) {
       const hp = P.hp; hurt(1, 'putin');
       if (scene !== playScene) return;
-      if (P.hp < hp) { e.hold = 50; L.pops.push({ x: e.x - 12, y: e.y - 10, s: 'СТОЯТЬ!', t: 40 }); }
+      if (P.hp < hp) { e.hold = 50; e.mode = 'turn'; e.turn = 80; L.pops.push({ x: e.x - 12, y: e.y - 10, s: 'СТОЯТЬ!', t: 40 }); }
     }
   },
 };
