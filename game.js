@@ -241,7 +241,7 @@ const SIZES = { y: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26],
   fat: [16, 18], ari: [16, 18], bar: [22, 20], alt: [14, 18], poc: [16, 20], tel: [10, 12], ban: [24, 12], ano: [40, 16], duo: [12, 18] };
 // имена над особыми врагами (показываются по-русски); телефонных мошенников больше нет — теперь это Шайтаны
 // (запасной вариант игры слов: 'МОШОННИКИ')
-const NAMES = { fat: 'ДиаблоФАТ', ari: 'Арирали', bar: 'Баратрум', alt: 'Сэм Альтман', poc: 'Опасный Почик', tel: 'ШАЙТАНЫ', ban: 'Фейл2бан', ano: 'Анонимус' };
+const NAMES = { fat: 'ДиаблоФАТ', ari: 'Арирали', bar: 'Баратрум', alt: 'Сэм Альтман', poc: 'Опасный Поцык', tel: 'ШАЙТАНЫ', ban: 'Фейл2бан', ano: 'Анонимус' };
 // какие новые враги встречаются на уровне (первый раз каждый гарантированно появляется)
 const POOL = {
   2: ['poc'], 3: ['poc'],
@@ -364,7 +364,7 @@ function buildArena(n) {
 function startLevel(n) {
   if (n <= LAST) save(n);
   L = n === LAST || n === SALT ? buildArena(n) : buildLevel(n);
-  P = { x: 24, y: L.spawnY, w: 8, h: 13, vx: 0, vy: 0, hp: 3, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null, stop: 0 };
+  P = { x: 24, y: L.spawnY, w: 8, h: 13, vx: 0, vy: 0, hp: 3, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null, stop: 0, grace: 0 };
   safe = { x: P.x, y: P.y }; shots = []; parts = []; shake = 0;
   scene = playScene;
 }
@@ -576,7 +576,7 @@ const ENEMY = {
     }
     if (ov(P, e, 3)) hurt(1, 'alt');
   },
-  // Опасный Почик: останавливает игрока и требует косарь. Платить нечем (всегда), поэтому в игрока летит
+  // Опасный Поцык: останавливает игрока и требует косарь. Платить нечем (всегда), поэтому в игрока летит
   // огромный пень, и его надо успеть обойти. Остановка — один раз; дальше он просто швыряется пнями.
   poc(e, dx, dy) {
     e.face = dx < 0 ? -1 : 1; if (e.anim) e.anim--;
@@ -666,7 +666,7 @@ const playScene = {
     for (const pl of L.plats) { pl.x += pl.vx; if (pl.x < pl.a) { pl.x = pl.a; pl.vx = Math.abs(pl.vx); } if (pl.x > pl.b) { pl.x = pl.b; pl.vx = -Math.abs(pl.vx); } }
     if (P.on) { moveX(P, P.on.vx); P.on = null; }
     // игрок
-    const frozen = P.stop > 0; if (frozen) P.stop--;   // Почик остановил игрока: управление отключено
+    const frozen = P.stop > 0; if (frozen) { P.stop--; P.grace = 60; } else if (P.grace > 0) P.grace--;   // Почик остановил игрока: управление отключено
     const ax = frozen ? 0 : keys.right - keys.left;
     P.vx += (ax * 2 - P.vx) * 0.3; if (Math.abs(P.vx) < 0.05) P.vx = 0;
     if (ax) P.face = ax;
@@ -719,10 +719,11 @@ const playScene = {
         if (ag && !e.ag) { sfx(90, 0.25, 'sawtooth', 60, 0.06); e.warn = 20; }
         e.ag = ag; if (ag && Math.abs(dx) > 3) e.dir = dx < 0 ? -1 : 1;
         let sp = 0.7; if (ag) { if (e.warn > 0) { e.warn--; sp = 0; } else sp = 1.4; }
+        if (P.stop > 0 || P.grace > 0) sp = 0;   // игрока держит Почик (и миг после): Дынекс не подкрадывается и не убивает
         e.x += e.dir * sp;
         if (e.x < e.x0) { e.x = e.x0; if (!ag) e.dir = 1; }
         if (e.x > e.x1) { e.x = e.x1; if (!ag) e.dir = -1; }
-        if (P.inv <= 0 && !P.stop && ov(P, e, 4)) { P.hp = 0; die('dynex'); return; }
+        if (P.inv <= 0 && !P.stop && P.grace <= 0 && ov(P, e, 4)) { P.hp = 0; die('dynex'); return; }
       } else if (ENEMY[e.t]) {
         ENEMY[e.t](e, dx, dy);
       } else if (e.t === 'f') {
