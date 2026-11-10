@@ -145,10 +145,14 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) for (
 const keys = { left: 0, right: 0, jump: 0, down: 0 };
 let jumpPressed = false, anyPressed = false, click = null;
 const codes = new Set(); // коды клавиш, нажатые за этот тик (для меню и мини-игр)
+// Код Konami: ↑ ↑ ↓ ↓ ← → ← → B A — открывает выбор уровня (в меню, на уровне, в паузе, в заплыве и паспорте)
+const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
+let konamiAt = 0, konamiHit = false;
 const KM = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'jump', KeyW: 'jump', Space: 'jump', KeyZ: 'jump', ArrowDown: 'down', KeyS: 'down' };
 addEventListener('keydown', e => {
   const k = KM[e.code];
   codes.add(e.code);
+  if (!e.repeat) { konamiAt = e.code === KONAMI[konamiAt] ? konamiAt + 1 : e.code === KONAMI[0] ? 1 : 0; if (konamiAt === KONAMI.length) { konamiAt = 0; konamiHit = true; } }
   setPad(false);
   if (e.code === 'KeyF' && !e.repeat) toggleFs();
   if (e.code === 'ArrowDown' || e.code === 'ArrowUp') e.preventDefault();
@@ -230,7 +234,7 @@ for (const n of ['fullscreenchange', 'webkitfullscreenchange']) document.addEven
 // ---------- сохранение
 // Хардкор (HC): одно сердце, ни одной флешки, ни одного чекпоинта — упал в яму значит умер, смерть возвращает на 1 уровень,
 // прогресс обычной игры не трогается. Запоминается только рекорд (самый дальний уровень) и факт прохождения.
-let HC = false;
+let HC = false, CHEAT = false;   // CHEAT: уровень загружен кодом Konami — прогресс не сохраняется
 const hcBest = () => { try { return clamp(parseInt(localStorage.getItem('holos_hc')) || 0, 0, LAST); } catch (e) { return 0; } };
 const hcDone = () => { try { return localStorage.getItem('holos_hc_win') === '1'; } catch (e) { return false; } };
 function save(n) {
@@ -403,7 +407,7 @@ function buildArena(n) {
   if (n === LAST) {
     for (const x of [2, 3, 4, 5, 14, 15, 16, 17]) g[6][x] = '=';
     L.spots = [[56, py - 16], [248, py - 16], [156, groundY - 18], [20, groundY - 18], [290, groundY - 18]];
-    L.boss = { kind: 'nos', x: 142, y: 14, w: 36, h: 40, hp: 9, max: 9, t: 0, ph: 0, cdA: 120, cdB: 200, cdF: 60, flash: 0, dead: 0, warn: null };
+    L.boss = { kind: 'nos', x: 142, y: 14, w: 36, h: 40, hp: 14, max: 14, t: 0, ph: 0, cdA: 100, cdB: 220, cdR: 150, cdF: 60, flash: 0, dead: 0, warn: null };
     L.banner = ['БОСС: МРДРНОС', 150];
   } else {
     for (const x of [1, 2, 3, 4, 8, 9, 10, 11]) g[6][x] = '=';
@@ -414,7 +418,7 @@ function buildArena(n) {
   return L;
 }
 function startLevel(n) {
-  if (n <= LAST) save(n);
+  if (n <= LAST && !CHEAT) save(n);
   L = n === LAST || n === SALT ? buildArena(n) : buildLevel(n);
   const hp = HC ? 1 : 3;
   P = { x: 24, y: L.spawnY, w: 8, h: 13, vx: 0, vy: 0, hp, max: hp, face: 1, inv: 0, ground: false, coy: 0, buf: 0, on: null, stop: 0, bash: 0, grace: 0 };
@@ -492,12 +496,12 @@ function hitBoss() {
   if (b.dead) return;
   b.hp--; b.flash = 14; shake = 5; sfx(220, 0.25, 'sawtooth', -120, 0.08); burst(b.x + b.w / 2, b.y + b.h / 2, '#19ff9c', 12);
   if (b.hp <= 0) { b.dead = 1; return; }
-  if (b.hp === 6 || b.hp === 3) { P.hp = Math.min(P.max, P.hp + 1); L.banner = [b.hp === 6 ? 'ФАЗА 2: KERNEL PANIC' : 'ФАЗА 3: SEGFAULT', 130]; }
+  if (b.hp === 10 || b.hp === 7 || b.hp === 4) { P.hp = Math.min(P.max, P.hp + 1); L.banner = [{ 10: 'ФАЗА 2: KERNEL PANIC', 7: 'ФАЗА 3: SEGFAULT', 4: 'ФАЗА 4: СИНИЙ ЭКРАН СМЕРТИ' }[b.hp], 130]; }
 }
 function spawnFlash(b) {
   if (L.ents.some(e => e.t === 'f' && !e.dead) || shots.some(s => s.k === 'usb')) return;
   if (--b.cdF > 0) return;
-  b.cdF = 140;
+  b.cdF = b.kind === 'nos' ? 110 : 140;
   const far = L.spots.filter(s => Math.abs(s[0] - P.x) > 50);
   const s = far[Math.floor(Math.random() * far.length)] || L.spots[0];
   L.ents.push(ent('f', s[0], s[1]));
@@ -510,21 +514,27 @@ function updNos(b) {
     if (b.dead > 130) scene = cardScene(END_TEXT, () => { scene = endingScene(); }, 3);
     return;
   }
-  const ph = b.hp > 6 ? 1 : b.hp > 3 ? 2 : 3;
-  b.ph += 0.012 * [0, 1, 1.3, 1.6][ph];
+  // 4 фазы: больше здоровья, быстрее и гуще атаки. Фаза 3+ — пикирование и дождь глитчей сверху, фаза 4 — двойные волны с обеих сторон
+  const ph = b.hp > 10 ? 1 : b.hp > 7 ? 2 : b.hp > 4 ? 3 : 4;
+  b.ph += 0.012 * [0, 1.15, 1.5, 1.85, 2.2][ph];
   b.x = 160 - b.w / 2 + Math.sin(b.ph) * 118;
-  b.y = 14 + Math.sin(b.t * 0.05) * 6 + (ph === 3 ? Math.pow(Math.max(0, Math.sin(b.t * 0.025)), 6) * 88 : 0);
+  b.y = 14 + Math.sin(b.t * 0.05) * 6 + (ph >= 3 ? Math.pow(Math.max(0, Math.sin(b.t * (ph === 3 ? 0.025 : 0.035))), 6) * 88 : 0);
   if (b.flash) b.flash--;
   if (--b.cdA <= 0) {
-    b.cdA = [0, 95, 75, 58][ph];
-    const cx = b.x + b.w / 2, cy = b.y + b.h, dx = P.x - cx, dy = P.y - cy, d = Math.hypot(dx, dy) || 1;
-    shots.push({ k: 'glitch', x: cx, y: cy, vx: dx / d * 2.1, vy: dy / d * 2.1, w: 6, h: 6 });
+    b.cdA = [0, 78, 62, 52, 46][ph];
+    const cx = b.x + b.w / 2, cy = b.y + b.h, a0 = Math.atan2(P.y - cy, P.x - cx), sp = 2.2 + ph * 0.2;
+    for (const da of [[0], [-0.14, 0.14], [-0.3, 0, 0.3], [-0.42, -0.14, 0.14, 0.42]][ph - 1])
+      shots.push({ k: 'glitch', x: cx, y: cy, vx: Math.cos(a0 + da) * sp, vy: Math.sin(a0 + da) * sp, w: 6, h: 6 });
     sfx(500, 0.08, 'square', -200, 0.03);
   }
-  if (ph >= 2 && !b.warn && --b.cdB <= 0) { b.cdB = ph === 2 ? 210 : 160; b.warn = { side: Math.random() < 0.5 ? -1 : 1, t: 55 }; sfx(700, 0.3, 'square', 0, 0.03); }
+  if (ph >= 3 && --b.cdR <= 0) {   // дождь глитчей: падают на то место, где стоит игрок
+    b.cdR = ph === 3 ? 70 : 42;
+    shots.push({ k: 'glitch', x: clamp(P.x + (Math.random() - 0.5) * 50, 4, VW - 10), y: -10, vx: 0, vy: 1.6, g: 0.03, w: 6, h: 6 });
+  }
+  if (!b.warn && --b.cdB <= 0) { b.cdB = [0, 250, 185, 140, 100][ph]; b.warn = { side: Math.random() < 0.5 ? -1 : 1, t: ph === 4 ? 40 : 55, both: ph === 4 || (ph === 3 && Math.random() < 0.3) }; sfx(700, 0.3, 'square', 0, 0.03); }
   if (b.warn && --b.warn.t <= 0) {
-    const s = b.warn.side;
-    shots.push({ k: 'sweep', x: s < 0 ? -12 : VW + 2, y: L.groundY - 10, vx: -s * 3, vy: 0, w: 10, h: 10 });
+    for (const s of b.warn.both ? [-1, 1] : [b.warn.side])
+      shots.push({ k: 'sweep', x: s < 0 ? -12 : VW + 2, y: L.groundY - 10, vx: -s * (ph >= 3 ? 3.6 : 3), vy: 0, w: 10, h: 10 });
     b.warn = null;
   }
   if (ov(P, b, 5)) hurt(1, 'nos');
@@ -1181,7 +1191,7 @@ const playScene = {
         spr(IMG.nos, b.x + (b.dead ? (Math.random() - 0.5) * 4 : 0), b.y, P.x < b.x, 2);
         ctx.globalAlpha = 1;
       }
-      if (b.warn && frame % 8 < 5) text('!', b.warn.side < 0 ? 6 : VW - 6, L.groundY - 12, '#ff3b3b', 8, 'center');
+      if (b.warn && frame % 8 < 5) for (const sd of b.warn.both ? [-1, 1] : [b.warn.side]) text('!', sd < 0 ? 6 : VW - 6, L.groundY - 12, '#ff3b3b', 8, 'center');
     }
     if (b && b.kind === 'bear') {
       spr(b.inhale ? IMG.bearOpen : IMG.bear, b.x + (b.inhale ? Math.sin(frame) : 0), b.y - (b.lift ? 6 : 0), false, 4);
@@ -1417,6 +1427,7 @@ function listMenu(o) {
   return {
     pad: 'none',
     music: o.music,
+    konami: o.konami,
     update() {
       const items = o.items(), n = items.length, g = geo(n), prev = sel;
       if (codes.has('Escape') || (o.close && o.close.some(c => codes.has(c)))) { o.back(); return; }
@@ -1476,7 +1487,7 @@ function pauseScene(prev) {
   const bg = () => prev.draw();
   const resume = () => { scene = prev; musDuck = 1; };
   me = listMenu({
-    title: 'ПАУЗА', bg, back: resume, close: ['KeyP'],
+    title: 'ПАУЗА', bg, back: resume, close: ['KeyP'], konami: true,
     items: () => [
       { s: 'ПРОДОЛЖИТЬ', f: resume },
       { s: 'НАСТРОЙКИ', f: () => { scene = settingsScene(() => { scene = me; }, bg); } },
@@ -1488,7 +1499,7 @@ function pauseScene(prev) {
 }
 
 function titleScene() {
-  HC = false;
+  HC = false; CHEAT = false;
   const saved = load(), best = hcBest();
   const items = [];
   if (saved > 1) items.push({ s: `ПРОДОЛЖИТЬ: УР.${saved}`, f: () => gotoLevel(saved) });
@@ -1504,6 +1515,7 @@ function titleScene() {
   return {
     pad: 'none',
     music: 'Menu',
+    konami: true,
     update() {
       t++;
       if (t < 15) return;
@@ -1970,10 +1982,57 @@ function failScene(reason, retry) {
   };
 }
 
+// ---------- выбор уровня (код Konami). Любой из 20 уровней, секретный, и обе мини-игры. Прогресс при этом не сохраняется
+function levelSelectScene(prev) {
+  const cells = [];
+  for (let n = 1; n <= LAST; n++) cells.push({ s: String(n), n, f: () => startLevel(n), col: n === LAST ? '#ff5a5a' : null });
+  const CW = 40, CH = 17, GX = (VW - CW * 5 - 4 * 4) / 2, GY = 30;
+  cells.forEach((c, i) => { c.x = GX + (i % 5) * (CW + 4); c.y = GY + Math.floor(i / 5) * (CH + 4); c.w = CW; c.h = CH; });
+  const SW = 90, SX = (VW - SW * 3 - 8) / 2, SY = GY + 4 * (CH + 4) + 6;
+  [['ЗАПЛЫВ', () => advance(4), '#4aa3ff'], ['ПАСПОРТ', () => advance(7), '#ffd23e'], ['СЕКРЕТ', () => startLevel(SALT), '#f7f1fa']].forEach(([s, f, col], i) =>
+    cells.push({ s, f, col, x: SX + i * (SW + 4), y: SY, w: SW, h: CH }));
+  let sel = Math.max(0, Math.min(LAST - 1, (L && L.n <= LAST ? L.n : load()) - 1)), t = 0;
+  const go = c => { CHEAT = true; HC = false; musDuck = 1; sfx(880, 0.15, 'triangle', 600, 0.05); c.f(); };
+  return {
+    pad: 'none', music: 'Menu',
+    update() {
+      t++;
+      if (codes.has('Escape') || codes.has('KeyP')) { musDuck = 1; scene = prev; return; }
+      const n = cells.length;
+      if (codes.has('ArrowLeft') || codes.has('KeyA')) sel = sel === 20 ? 22 : (sel + n - 1) % n;
+      if (codes.has('ArrowRight') || codes.has('KeyD')) sel = (sel + 1) % n;
+      if (codes.has('ArrowUp') || codes.has('KeyW')) sel = sel >= 20 ? Math.min(19, 15 + (sel - 20) * 2) : sel >= 5 ? sel - 5 : 20 + Math.min(2, Math.floor(sel / 2));
+      if (codes.has('ArrowDown') || codes.has('KeyS')) sel = sel >= 20 ? Math.min(4, (sel - 20) * 2) : sel >= 15 ? 20 + Math.min(2, Math.floor((sel - 15) / 2)) : sel + 5;
+      if (t > 10 && (codes.has('Enter') || codes.has('Space') || codes.has('KeyZ'))) { go(cells[sel]); return; }
+      if (click && t > 10) { const i = cells.findIndex(c => inside(click, c)); if (i >= 0) { sel = i; go(cells[i]); } }
+    },
+    draw() {
+      drawBG(3, frame * 0.3);
+      ctx.fillStyle = '#000000b0'; ctx.fillRect(0, 0, VW, VH);
+      text('ВЫБОР УРОВНЯ', 160, 8, '#19ff9c', 8, 'center');
+      text('КОД KONAMI АКТИВИРОВАН', 160, 19, '#9a9aa6', 6, 'center');
+      cells.forEach((c, i) => {
+        const on = i === sel;
+        box(c.x, c.y, c.w, c.h, on ? '#19ff9c' : '#2b2a33', on ? '#fff' : c.col || '#9a9aa6');
+        text(c.s, c.x + c.w / 2, c.y + 6, on ? '#17161c' : c.col || '#fff', 6, 'center');
+      });
+      const c = cells[sel];
+      const info = c.n ? ZONES[zoneOf(c.n)].name : sel === 20 ? 'МИНИ-ИГРА ПЕРЕД УРОВНЕМ 4' : sel === 21 ? 'МИНИ-ИГРА ПЕРЕД УРОВНЕМ 7' : 'СОЛЕВАЯ ШАХТА: ВЕДМЕДИК БО';
+      text(info, 160, SY + CH + 8, '#ffe27a', 6, 'center');
+      text('СТРЕЛКИ ВЫБОР   ENTER / КЛИК ИГРАТЬ   ESC НАЗАД', 160, 168, '#6b6a76', 6, 'center');
+      text('ПРОГРЕСС НЕ СОХРАНЯЕТСЯ', 160, 158, '#6b6a76', 6, 'center');
+    },
+  };
+}
+
 // ---------- цикл
 scene = captchaScene();
 let last = 0, acc = 0;
 function tick() {
+  if (konamiHit) {
+    konamiHit = false;
+    if (scene.pausable || scene.konami) { scene = levelSelectScene(scene); sfx(660, 0.3, 'square', 600, 0.05); click = null; anyPressed = false; jumpPressed = false; codes.clear(); }
+  }
   // пауза: Esc, P или кнопка II; вход в неё съедает нажатие, чтобы оно не попало в саму паузу
   if (scene.pausable && (codes.has('Escape') || codes.has('KeyP') || (click && inside(click, PAUSE_BTN)))) {
     scene = pauseScene(scene); sfx(300, 0.06, 'square', 0, 0.03);
@@ -1997,4 +2056,4 @@ function loop(ts) {
 requestAnimationFrame(loop);
 
 // хук для отладки и тестов
-window.__G = { startLevel, gotoLevel, buildLevel, keys, tick, render, press() { jumpPressed = true; anyPressed = true; }, get P() { return P; }, get L() { return L; }, get shots() { return shots; }, get scene() { return scene; }, set scene(s) { scene = s; }, deathScene, duoDeathScene, endingScene, crystalScene, titleScene, playScene, swimScene, passportScene, failScene, advance, ENEMY, SALT, LAST, codes, pressClick(x, y) { click = { x, y }; anyPressed = true; } };
+window.__G = { levelSelectScene, startLevel, gotoLevel, buildLevel, keys, tick, render, press() { jumpPressed = true; anyPressed = true; }, get P() { return P; }, get L() { return L; }, get shots() { return shots; }, get scene() { return scene; }, set scene(s) { scene = s; }, deathScene, duoDeathScene, endingScene, crystalScene, titleScene, playScene, swimScene, passportScene, failScene, advance, ENEMY, SALT, LAST, codes, pressClick(x, y) { click = { x, y }; anyPressed = true; } };
