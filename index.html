@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>ХОЛОС: ЯДРО 8</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  body{display:flex;align-items:flex-start;justify-content:center}
+  canvas{display:block;width:min(100vw,calc(100vh*16/9));height:auto;aspect-ratio:16/9;
+    image-rendering:pixelated;image-rendering:crisp-edges;background:#000}
+  @media (orientation:landscape){body{align-items:center}}
+  #pad{display:none;position:fixed;left:0;right:0;bottom:max(14px,env(safe-area-inset-bottom));
+    padding:0 14px;justify-content:space-between;pointer-events:none}
+  #pad.on{display:flex}
+  #pad div{display:flex;gap:12px}
+  #pad button{pointer-events:auto;width:72px;height:72px;border-radius:14px;border:3px solid #fff8;
+    background:#ffffff22;color:#fff;font:28px monospace;touch-action:none}
+  #pad button.act{background:#ffffff66}
+  #pad button.j{width:96px}
+  .fontload{font-family:"Press Start 2P";position:absolute;opacity:0;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="fontload">Хх</div>
+<div id="pad">
+  <div><button data-k="left">◀</button><button data-k="right">▶</button></div>
+  <div><button class="j" data-k="jump">▲</button></div>
+</div>
+<script src="sprites.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
