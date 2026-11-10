@@ -178,7 +178,19 @@ const SPR = {
     '.OOO.',
     '.OOO.',
   ],
+  // жёлтый куб Яроша-«башера»: летит вместо бутылки
+  cube: [
+    'kkkkkkk',
+    'kyyyyYk',
+    'kywwyYk',
+    'kywyyYk',
+    'kyyyyYk',
+    'kYYYYYk',
+    'kkkkkkk',
+  ],
 };
+// Никита Ярош с кубом: тот же человек, но в руке жёлтый куб вместо бутылки
+SPR.yarosh2 = SPR.yarosh.map((r, y) => y < 4 ? r.slice(0, 10) + ['kkkk', 'kYyk', 'kyyk', 'kkkk'][y] : r);
 // Ведмедик с открытой пастью (для экрана поражения)
 SPR.bearOpen = SPR.bear.slice();
 SPR.bearOpen[10] = '.koooookkkkkkoooook.';
