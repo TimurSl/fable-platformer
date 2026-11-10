@@ -239,7 +239,7 @@ let frame = 0, scene = null, L = null, P = null, shots = [], parts = [], safe = 
 // ---------- построение уровней
 const SIZES = { y: [14, 16], d: [16, 18], f: [8, 12], m: [14, 18], g: [16, 26],
   fat: [16, 18], ari: [16, 18], bar: [22, 20], alt: [14, 18], poc: [16, 20], tel: [10, 12], ban: [24, 12], ano: [40, 16], duo: [12, 18],
-  mak: [16, 24], mk: [16, 24], ros: [22, 15], laa: [16, 18], vlad: [16, 22] };
+  mak: [16, 24], mk: [16, 24], pol: [12, 18], ros: [22, 15], laa: [16, 18], vlad: [16, 22] };
 // имена над особыми врагами (показываются по-русски); телефонных мошенников больше нет — теперь это Шайтаны
 // (запасной вариант игры слов: 'МОШОННИКИ')
 const NAMES = { fat: 'ДиаблоФАТ', ari: 'Арирали', bar: 'Баратрум', alt: 'Сэм Альтман', poc: 'Опасный Поцык', tel: 'ШАЙТАНЫ', ban: 'Фейл2бан', ano: 'Анонимус',
@@ -527,6 +527,8 @@ function lobAim(sx, sy, g, speed, tmin, tmax) {
   return { vx: (q.x + q.w / 2 - sx) / n, vy: (q.y + q.h / 2 - sy - g * n * (n + 1) / 2) / n, n };
 }
 const YELL = ['РОСТИК!!!', 'ТЫ ЧЁ ТВОРИШЬ?!', 'ОПЯТЬ ТЫ!', 'РОСТИК, БЛИН!', 'ИДИ СЮДА!!!', 'Я ЖЕ ГОВОРИЛ!', 'РОСТИИИК!!!'];
+const PUTIN_LINES = ['ВЗЯТЬ ЕГО!', 'ЗАДЕРЖАТЬ!', 'ОМОН, ВПЕРЁД!', 'НЕ ЗНАЮ ТАКОГО'];
+const NAVY_LINES = ['ДРУЗЬЯ!', 'БЕГИ, ХОЛОС!', 'ПРЯЧЬСЯ!'];
 const SCAM_LINES = ['ВАШ СЧЁТ!', 'ВЫ ВЫИГРАЛИ!', 'ГОСУСЛУГИ?', 'СЛУЖБА БЕЗОП.', 'НЕ ВЕШАЙТЕ!'];
 const ENEMY = {
   // DiabloFAT: веер из трёх огненных шаров
@@ -759,16 +761,55 @@ const ENEMY = {
     e.y = e.gy - e.h - e.oy;
     if (ov(P, e, 3)) hurt(1, 'ano');
   },
-  // Навальный и В. В. Путин: расходятся и сходятся по платформе, как два маятника
+  // Навальный и В. В. Путин. Путин прохаживается у правого края платформы и спускает на игрока полицию:
+  // полицейские бегут быстрее Холоса — убежать нельзя, только перепрыгнуть. Навальный у левого края
+  // отстреливает полицейских; его пули Холоса не задевают, но касаться самих двоих по-прежнему больно.
   duo(e) {
-    e.ph += 0.021;
-    const span = e.w - 12;
-    e.ax = e.x + span * (0.5 + 0.5 * Math.sin(e.ph));
-    e.bx = e.x + span * (0.5 - 0.5 * Math.sin(e.ph));
-    const y = e.gy - 18;
+    if (e.cd === undefined) { e.cd = 50; e.ncd = 20; e.cops = []; e.flash = 0; }
+    e.ph += 0.03;
+    const span = Math.max(0, e.w - 12), room = Math.min(20, span / 3), y = e.gy - 18;
+    e.ax = e.x + room * (0.5 + 0.5 * Math.sin(e.ph));
+    e.bx = e.x + span - room * (0.5 + 0.5 * Math.sin(e.ph * 0.7));
+    const pdx = P.x + P.w / 2 - (e.bx + 6), pdy = P.y + P.h / 2 - (y + 9);
+    e.cops = e.cops.filter(c => !c.dead);
+    if (Math.abs(pdx) < 220 && Math.abs(pdy) < 100 && e.cops.length < 2 && --e.cd <= 0) {
+      const c = ent('pol', e.bx, y, { vx: 0, vy: 0, ground: true, face: pdx < 0 ? -1 : 1, life: 480, hold: 14 });
+      e.cops.push(c); L.ents.push(c); e.cd = 150; e.ncd = Math.max(e.ncd, 48);   // Навальный замечает новенького не сразу: первый рывок — твоя забота
+      L.pops.push({ x: e.bx - 20, y: y - 30, s: PUTIN_LINES[Math.floor(Math.random() * PUTIN_LINES.length)], t: 50 });
+      burst(e.bx + 6, y + 9, '#4aa3ff', 8); sfx(660, 0.35, 'square', 330, 0.04);
+    }
+    // Навальный целится в ближайшего полицейского (с упреждением) и стреляет
+    const nx = e.ax + 6, ny = y + 8;
+    let tgt = null, best = 240;
+    for (const c of e.cops) { const dd = Math.abs(c.x + 6 - nx); if (dd < best && Math.abs(c.y - y) < 90) { best = dd; tgt = c; } }
+    e.nface = (tgt ? tgt.x : P.x) > e.ax ? 1 : -1;
+    if (e.ncd > 0) e.ncd--;
+    if (e.flash > 0) e.flash--;
+    if (tgt && e.ncd <= 0) {
+      const tx = tgt.x + 6 + tgt.vx * best / 4.5, ty = tgt.y + 8, a = Math.atan2(ty - ny, tx - nx) + (Math.random() - 0.5) * 0.3;   // стреляет не всегда метко
+      shots.push({ k: 'nbul', x: nx + e.nface * 8, y: ny, vx: Math.cos(a) * 4.5, vy: Math.sin(a) * 4.5, w: 4, h: 3, t: 0 });
+      e.ncd = 50; e.flash = 4; sfx(1300, 0.06, 'square', -900, 0.04);
+      if (Math.random() < 0.3) L.pops.push({ x: e.ax - 16, y: y - 22, s: NAVY_LINES[Math.floor(Math.random() * NAVY_LINES.length)], t: 40 });
+    }
     // кто именно задел — от этого зависит экран поражения
     if (ov(P, { x: e.ax, y, w: 12, h: 18 }, 3)) hurt(1, 'navy');
     else if (ov(P, { x: e.bx, y, w: 12, h: 18 }, 3)) hurt(1, 'putin');
+  },
+  // полицейский Путина: разгоняется быстрее Холоса, перепрыгивает стены, в ямы падает; задержав — замирает
+  pol(e, dx) {
+    if (--e.life <= 0 || e.y > H * T + 30) { e.dead = true; if (e.life <= 0) burst(e.x + 6, e.y + 9, '#4aa3ff', 10); return; }
+    if (e.hold > 0) { e.hold--; e.vx *= 0.8; }
+    else { const want = Math.abs(dx) > 4 ? (dx < 0 ? -1 : 1) : 0; if (want) e.face = want; e.vx += (want * 2.9 - e.vx) * 0.2; }
+    const vx0 = e.vx;
+    e.vy = Math.min(7, e.vy + 0.35); e.ground = false;
+    moveX(e, e.vx); const blocked = e.vx === 0 && Math.abs(vx0) > 0.5;
+    moveY(e, e.vy);
+    if (blocked && e.ground) e.vy = -6.2;
+    if (ov(P, e, 3)) {
+      const hp = P.hp; hurt(1, 'putin');
+      if (scene !== playScene) return;
+      if (P.hp < hp) { e.hold = 50; L.pops.push({ x: e.x - 12, y: e.y - 10, s: 'СТОЯТЬ!', t: 40 }); }
+    }
   },
 };
 
@@ -846,7 +887,15 @@ function drawEnt(e) {
   } else if (e.t === 'ano') {
     for (let i = 0; i < 3; i++) spr(IMG.ano, e.x + i * 14, e.y, false);
   } else if (e.t === 'duo') {
-    spr(IMG.navy, e.ax, e.gy - 18, false); spr(IMG.putin, e.bx, e.gy - 18, false);
+    spr(IMG.navy, e.ax, e.gy - 18, e.nface < 0); spr(IMG.putin, e.bx, e.gy - 18, false);
+    const gx = e.nface < 0 ? e.ax - 4 : e.ax + 11;   // пистолет Навального
+    ctx.fillStyle = '#17161c'; ctx.fillRect(gx, e.gy - 9, 5, 2); ctx.fillRect(gx + (e.nface < 0 ? 3 : 0), e.gy - 8, 2, 3);
+    if (e.flash) { ctx.fillStyle = '#ffd23e'; ctx.fillRect(e.nface < 0 ? gx - 3 : gx + 5, e.gy - 10, 3, 4); }
+  } else if (e.t === 'pol') {
+    const run = Math.abs(e.vx || 0) > 0.5;
+    spr(IMG.police, e.x, e.y - (run && Math.floor(frame / 3) % 2 ? 1 : 0), e.face < 0);
+    ctx.fillStyle = frame % 10 < 5 ? '#ff3b3b' : '#4aa3ff'; ctx.fillRect(e.x + 5, e.y - 2, 2, 2);   // мигалка на фуражке
+    ctx.fillStyle = '#17161c'; ctx.fillRect(e.face < 0 ? e.x - 2 : e.x + 12, e.y + 5 + (frame % 8 < 4 ? 0 : 1), 2, 8);   // дубинка
   } else if (e.t === 'f') spr(IMG.flash, e.x, e.y + Math.sin(frame * 0.1) * 2);
   else if (e.t === 'm') spr(IMG.melvi, e.x, e.y, P && P.x < e.x);
   else if (e.t === 'g') {
@@ -947,6 +996,15 @@ const playScene = {
         if (ov(P, s)) hurt(1, 'req');
         return s.t < 76;
       }
+      if (s.k === 'nbul') {   // пуля Навального: летит в полицейских, Холоса не задевает
+        s.x += s.vx; s.y += s.vy;
+        if (++s.t > 70 || tileAt(s.x + 2, s.y + 1)) { burst(s.x, s.y, '#ffd23e', 3); return false; }
+        for (const c of L.ents) if (c.t === 'pol' && !c.dead && ov(s, c)) {
+          c.dead = true; burst(c.x + 6, c.y + 9, '#4aa3ff', 12); burst(c.x + 6, c.y + 9, '#ffd23e', 6);
+          L.pops.push({ x: c.x - 4, y: c.y - 8, s: 'БАХ!', t: 35 }); sfx(160, 0.2, 'sawtooth', -80, 0.06); return false;
+        }
+        return true;
+      }
       if (s.k === 'quake') {   // ударная волна Баратрума: катится по земле только в пределах его дорожки
         s.x += s.vx;
         if (ov(P, s, 1)) hurt(1, 'bar');
@@ -1040,6 +1098,7 @@ const playScene = {
       else if (s.k === 'flag') { ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, 14, 10); spr(IMG['flag' + s.f], s.x, s.y, s.vx < 0); }
       else if (s.k === 'glitch') { ctx.fillStyle = frame % 4 < 2 ? '#ff4fd8' : '#19ff9c'; ctx.fillRect(s.x, s.y, 6, 6); ctx.fillStyle = '#fff'; ctx.fillRect(s.x + 2, s.y + 2, 2, 2); }
       else if (s.k === 'sweep') { ctx.fillStyle = '#ff4fd8'; ctx.fillRect(s.x, s.y, 10, 10); ctx.fillStyle = '#19ff9c'; ctx.fillRect(s.x + 2, s.y + (frame % 6), 6, 2); }
+      else if (s.k === 'nbul') { ctx.fillStyle = '#ffd23e'; ctx.fillRect(Math.round(s.x), Math.round(s.y), 4, 2); ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(s.x + (s.vx > 0 ? 3 : 0)), Math.round(s.y), 1, 2); }
       else if (s.k === 'quake') { const f = frame % 6 < 3; ctx.fillStyle = '#17161c'; ctx.fillRect(Math.round(s.x) - 1, s.y + 1, 12, 8); ctx.fillStyle = '#cfeeff'; ctx.fillRect(Math.round(s.x), s.y + (f ? 2 : 3), 10, f ? 6 : 5); ctx.fillStyle = '#fff'; ctx.fillRect(Math.round(s.x) + 3, s.y + (f ? 0 : 1), 4, 2); }
       else if (s.k === 'wave') { ctx.fillStyle = '#f7f1fa'; ctx.fillRect(s.x, s.y + 3, 10, 6); ctx.fillRect(s.x + 3, s.y, 4, 3); }
       else if (s.k === 'crystal') { ctx.fillStyle = '#f7f1fa'; ctx.fillRect(s.x + 1, s.y, 5, 8); ctx.fillStyle = '#ffb8d8'; ctx.fillRect(s.x + 2, s.y + 8, 3, 2); ctx.fillRect(s.x + 3, s.y + 10, 1, 1); }

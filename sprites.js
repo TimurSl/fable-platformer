@@ -379,6 +379,27 @@ Object.assign(SPR, {
     '.kUUk.',
     '.kkkk.',
   ]),
+  // Полицейский Путина: фуражка с кокардой, тёмно-синяя форма, ремень
+  police: mir([
+    '...kkk',
+    '..kUUU',
+    '.kUUUy',
+    'kkkkkk',
+    '.kssss',
+    '.kssks',
+    '.kssss',
+    '..kskk',
+    '...kss',
+    '.kUUUw',
+    'kUUUUU',
+    'kUyUUU',
+    'kUUUUU',
+    'kUkkkk',
+    'kUUUUU',
+    '.kUUk.',
+    '.kUUk.',
+    '.kkkk.',
+  ]),
   // Большой пень: Почик швыряет им в того, кто не заплатил косарь
   stump: mir([
     '...kkkkkk',

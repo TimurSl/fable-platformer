@@ -115,7 +115,7 @@ function mkBuild(d) {
     const [w, h] = SIZES[t], [a, b] = lane(cx, cy), lw = (b - a + 1) * T;
     const x0 = a * T, x1 = Math.max(x0, (b + 1) * T - w), x = clamp(cx * T + Math.round((T - w) / 2), x0, x1), y = fy - h;
     if (t === 'ban') { ents.push(ent('ban', x0, fy - 12, { w: lw, gy: fy, hx: clamp(cx * T - 4, x0, x0 + lw - 24), hy: fy - 90, st: 0, bt: 0, vy: 0, cd: 30 })); continue; }
-    if (t === 'duo') { ents.push(ent('duo', x0, fy - 18, { w: lw, ph: Math.PI / 2, gy: fy, ax: x0 + lw - 12, bx: x0 })); continue; }
+    if (t === 'duo') { ents.push(ent('duo', x0, fy - 18, { w: lw, ph: 0, gy: fy, ax: x0, bx: x0 + lw - 12 })); continue; }
     const X = {
       y: { cd: 60 }, d: { x0, x1, dir: -1 }, fat: { cd: 80 }, ari: { st: 0, cd: 50, vx: 0, vy: 0, face: -1 },
       bar: { x0, x1, dir: -1, st: 0, cd: 40 }, alt: { x0: x0 + 2, x1: Math.max(x0 + 2, (b + 1) * T - 16), cd: 100 },
